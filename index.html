@@ -66,6 +66,10 @@
   .cell-has-evidence:hover { background-color: #d1fae5; }
   .cell-no-evidence { background-color: #ffffff; border-color: #e2e8f0; }
   .cell-no-evidence:hover { border-color: #60a5fa; background-color: #eff6ff; }
+  /* Chip «Esta semana se lee a nª hora»: parpadeo a 1 Hz (ciclo de 1 s) */
+  @keyframes chip-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+  .chip-semana-blink { animation: chip-blink 1s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .chip-semana-blink { animation: none; } }
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800 antialiased">
@@ -418,7 +422,39 @@ const INSTITUTO = {
 // Versión visible de la aplicación. Aparece en el pie del login y en el panel de
 // gestión de usuarios para poder comprobar de un vistazo si el dispositivo está
 // ejecutando la versión nueva o una copia antigua cacheada por la PWA.
-const APP_VERSION = "2.31";
+const APP_VERSION = "2.35";
+
+// Versión de la aplicación para el chip de Inicio: se pregunta al service worker
+// activo (su CACHE_NAME, p. ej. "nmaspi-v2.34" → "2.34") con un mensaje; si no
+// hay SW o no responde en 1,5 s, se usa la constante APP_VERSION local.
+function getAppVersionFromSW() {
+  return new Promise((resolve) => {
+    const fallback = () => resolve(APP_VERSION);
+    if (!navigator.serviceWorker?.controller) return fallback();
+    const timer = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("message", onMsg);
+      fallback();
+    }, 1500);
+    const onMsg = (e) => {
+      if (e.data?.type === "VERSION") {
+        clearTimeout(timer);
+        navigator.serviceWorker.removeEventListener("message", onMsg);
+        const raw = String(e.data.version || "");
+        const m = raw.match(/v?(\d+(?:\.\d+)*)\s*$/); // "nmaspi-v2.34" → "2.34"
+        resolve(m ? m[1] : APP_VERSION);
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    navigator.serviceWorker.controller.postMessage({ type: "GET_VERSION" });
+  });
+}
+window._updateVersionChip = async () => {
+  const el = document.getElementById("chip-app-version");
+  if (!el) return;
+  el.textContent = `v${APP_VERSION}`; // valor provisional mientras responde el SW
+  const v = await getAppVersionFromSW();
+  if (el.isConnected) el.textContent = `v${v}`;
+};
 
 const CLASS_GROUPS = ["1ºA", "1ºB", "2ºA", "2ºB", "3ºA", "3ºB", "3ºDiver", "4º Ciencias", "4º Sociales", "4º Ciclos", "4º Diver"];
 
@@ -1001,6 +1037,37 @@ function getEvaluationForWeek(weekNumber) {
 }
 function getReadingHour(weekNumber) {
   return ((weekNumber - 1) % 6) + 1;
+}
+// Semana actual del Plan Lector según el calendario configurado en Cursos
+// Escolares (planStart + trimestres). Devuelve null si hoy cae fuera del
+// periodo cubierto por las evaluaciones (vacaciones, curso no iniciado...).
+function getSemanaLectorActual() {
+  const curso = getCurrentCurso();
+  // normalizeDate solo acepta strings "YYYY-MM-DD"; si planStart llega como
+  // Date (p. ej. desde Firestore) lo clonamos directamente.
+  const planStartRaw = getPlanStartForCurso(curso);
+  const planStart = planStartRaw instanceof Date ? new Date(planStartRaw) : normalizeDate(planStartRaw);
+  if (!planStart || isNaN(planStart.getTime())) return null;
+  const hoy = new Date();
+  const week = Math.floor((hoy - planStart) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  const total = totalWeeksOfEvals(getEvaluacionesDisplay(curso));
+  if (week < 1 || week > total) return null;
+  return { num: week, hour: getReadingHour(week), evalIdx: getEvaluationForWeek(week) };
+}
+// Chip «Esta semana se lee a nª hora»: oculto si no hay sesión iniciada o si
+// hoy está fuera del cronograma.
+function chipSemanaLectora() {
+  if (!state.user) return "";
+  const info = getSemanaLectorActual();
+  if (!info) return "";
+  return `
+    <span role="button" tabindex="0" title="Ir a la semana ${info.num} del cronograma para registrar tu evidencia"
+      onclick="event.stopPropagation(); window._goSemanaLectora()"
+      onkeydown="if(event.key==='Enter'){event.stopPropagation(); window._goSemanaLectora();}"
+      class="chip-semana-blink absolute top-3 right-3 sm:top-4 sm:right-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/25 hover:bg-white/50 border border-white/50 px-2.5 py-1 text-[11px] sm:text-xs font-semibold text-white cursor-pointer transition select-none shadow-sm">
+      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Esta semana se lee a ${info.hour}ª hora
+    </span>`;
 }
 function getDaysOfWeek(weekStart) {
   const days = [];
@@ -3221,6 +3288,8 @@ function renderMain() {
   restoreGestionUsuariosUI(usuariosUISnap);
   // Attach view-specific handlers
   attachHandlers();
+  // Chip de versión en Inicio: pregunta la versión real al service worker
+  window._updateVersionChip?.();
 }
 
 // -----------------------------------------------------------------------------
@@ -3273,6 +3342,18 @@ function navigateTo(view, { push = true } = {}) {
 }
 // Expose navigation helpers
 window._go = (view) => navigateTo(view, { push: true });
+// Chip «Esta semana se lee a nª hora»: abre el cronograma con el trimestre de
+// la semana actual desplegado y centra la semana en pantalla.
+window._goSemanaLectora = () => {
+  const info = getSemanaLectorActual();
+  if (!info) return;
+  navigateTo({ name: "cronograma-lector" }, { push: true });
+  state.openEvals.add(info.evalIdx);
+  renderMain();
+  setTimeout(() => {
+    document.getElementById(`semana-lector-${info.num}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, 500);
+};
 window._goBack = () => {
   const prev = state.navHistory.pop();
   navigateTo(prev || { name: "home" }, { push: false });
@@ -3292,7 +3373,9 @@ function viewHome() {
         </div>
         <h1 class="text-2xl sm:text-4xl font-bold leading-tight">Planes Lector y de Razonamiento Matemático</h1>
         <p class="mt-2 text-sm sm:text-base text-white/90">${INSTITUTO.nombre} · ${INSTITUTO.localidad}</p>
-        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${INSTITUTO.curso}</p>
+        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${INSTITUTO.curso}
+          <span id="chip-app-version" title="Versión de la aplicación" class="ml-1.5 inline-flex items-center rounded-full bg-white/15 border border-white/25 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-white/90 align-middle">v${APP_VERSION}</span>
+        </p>
         <a href="${isAdmin() ? MANUALES_USUARIO.admin : MANUALES_USUARIO.profesorado}" target="_blank" rel="noopener" title="Manual de usuario en PDF (se abre en una ventana nueva)" class="absolute bottom-2.5 right-2.5 sm:bottom-4 sm:right-4 inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/30 border border-white/25 px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs font-semibold text-white transition">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
           <span class="hidden sm:inline">Manual de usuario</span><span class="sm:hidden">Manual</span>
@@ -3306,6 +3389,7 @@ function viewHome() {
           </div>
           <h2 class="text-xl sm:text-2xl font-bold">Plan Lector</h2>
           <p class="text-sm text-white/85 mt-1">Refuerzo de la Competencia Lingüística. Cronograma de sesiones de lectura de 30 minutos con rotación horaria.</p>
+          ${chipSemanaLectora()}
           <p class="text-xs text-white/70 mt-3 inline-flex items-center gap-1 group-hover:translate-x-1 transition">Acceder →</p>
         </button>
         <button onclick="window._go({name:'razonamiento-matematico'})" class="group relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 text-white p-6 sm:p-8 shadow-lg hover:shadow-2xl transition-all hover:scale-[1.02] text-left">
@@ -3387,6 +3471,7 @@ function viewPlanLectorHome() {
           </div>
           <h2 class="text-lg sm:text-xl font-bold">Cronograma del Plan</h2>
           <p class="text-sm text-white/85 mt-1">Sesiones semanales con rotación de horas. Registra tus evidencias de lectura.</p>
+          ${chipSemanaLectora()}
           <p class="text-xs text-white/70 mt-3 inline-flex items-center gap-1 group-hover:translate-x-1 transition">Abrir cronograma →</p>
         </button>
         <button onclick="window._go({name:'recursos-cl'})" class="group relative overflow-hidden rounded-2xl bg-gradient-to-br from-purple-500 to-indigo-700 text-white p-6 shadow-lg hover:shadow-2xl transition-all hover:scale-[1.02] text-left">
@@ -3545,7 +3630,7 @@ function renderWeekLector(w) {
   }).join("");
 
   return `
-    <div class="rounded-lg border border-slate-200 overflow-hidden bg-white">
+    <div class="rounded-lg border border-slate-200 overflow-hidden bg-white" id="semana-lector-${w.num}">
       <div class="flex items-center justify-between px-3 py-1.5 bg-slate-50 border-b border-slate-200">
         <span class="text-xs font-bold text-slate-700">Semana ${w.num}</span>
         <span class="text-xs text-slate-500">${formatDateES(w.start)} → ${formatDateES(w.days[4].date)}</span>
