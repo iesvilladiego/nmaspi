@@ -422,7 +422,39 @@ const INSTITUTO = {
 // Versión visible de la aplicación. Aparece en el pie del login y en el panel de
 // gestión de usuarios para poder comprobar de un vistazo si el dispositivo está
 // ejecutando la versión nueva o una copia antigua cacheada por la PWA.
-const APP_VERSION = "2.33";
+const APP_VERSION = "2.34";
+
+// Versión de la aplicación para el chip de Inicio: se pregunta al service worker
+// activo (su CACHE_NAME, p. ej. "nmaspi-v2.34" → "2.34") con un mensaje; si no
+// hay SW o no responde en 1,5 s, se usa la constante APP_VERSION local.
+function getAppVersionFromSW() {
+  return new Promise((resolve) => {
+    const fallback = () => resolve(APP_VERSION);
+    if (!navigator.serviceWorker?.controller) return fallback();
+    const timer = setTimeout(() => {
+      navigator.serviceWorker.removeEventListener("message", onMsg);
+      fallback();
+    }, 1500);
+    const onMsg = (e) => {
+      if (e.data?.type === "VERSION") {
+        clearTimeout(timer);
+        navigator.serviceWorker.removeEventListener("message", onMsg);
+        const raw = String(e.data.version || "");
+        const m = raw.match(/v?(\d+(?:\.\d+)*)\s*$/); // "nmaspi-v2.34" → "2.34"
+        resolve(m ? m[1] : APP_VERSION);
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    navigator.serviceWorker.controller.postMessage({ type: "GET_VERSION" });
+  });
+}
+window._updateVersionChip = async () => {
+  const el = document.getElementById("chip-app-version");
+  if (!el) return;
+  el.textContent = `v${APP_VERSION}`; // valor provisional mientras responde el SW
+  const v = await getAppVersionFromSW();
+  if (el.isConnected) el.textContent = `v${v}`;
+};
 
 const CLASS_GROUPS = ["1ºA", "1ºB", "2ºA", "2ºB", "3ºA", "3ºB", "3ºDiver", "4º Ciencias", "4º Sociales", "4º Ciclos", "4º Diver"];
 
@@ -3256,6 +3288,8 @@ function renderMain() {
   restoreGestionUsuariosUI(usuariosUISnap);
   // Attach view-specific handlers
   attachHandlers();
+  // Chip de versión en Inicio: pregunta la versión real al service worker
+  window._updateVersionChip?.();
 }
 
 // -----------------------------------------------------------------------------
@@ -3339,7 +3373,9 @@ function viewHome() {
         </div>
         <h1 class="text-2xl sm:text-4xl font-bold leading-tight">Planes Lector y de Razonamiento Matemático</h1>
         <p class="mt-2 text-sm sm:text-base text-white/90">${INSTITUTO.nombre} · ${INSTITUTO.localidad}</p>
-        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${INSTITUTO.curso}</p>
+        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${INSTITUTO.curso}
+          <span id="chip-app-version" title="Versión de la aplicación" class="ml-1.5 inline-flex items-center rounded-full bg-white/15 border border-white/25 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-white/90 align-middle">v${APP_VERSION}</span>
+        </p>
         <a href="${isAdmin() ? MANUALES_USUARIO.admin : MANUALES_USUARIO.profesorado}" target="_blank" rel="noopener" title="Manual de usuario en PDF (se abre en una ventana nueva)" class="absolute bottom-2.5 right-2.5 sm:bottom-4 sm:right-4 inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/30 border border-white/25 px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs font-semibold text-white transition">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
           <span class="hidden sm:inline">Manual de usuario</span><span class="sm:hidden">Manual</span>
