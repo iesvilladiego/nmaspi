@@ -422,7 +422,7 @@ const INSTITUTO = {
 // Versión visible de la aplicación. Aparece en el pie del login y en el panel de
 // gestión de usuarios para poder comprobar de un vistazo si el dispositivo está
 // ejecutando la versión nueva o una copia antigua cacheada por la PWA.
-const APP_VERSION = "2.35";
+const APP_VERSION = "2.36";
 
 // Versión de la aplicación para el chip de Inicio: se pregunta al service worker
 // activo (su CACHE_NAME, p. ej. "nmaspi-v2.34" → "2.34") con un mensaje; si no
@@ -1016,8 +1016,11 @@ function formatDateES(d) {
   if (!d || isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
-function getWeekDates(weekNumber) {
-  const curso = getCurrentCurso();
+function getWeekDates(weekNumber, cursoOverride) {
+  // Con cursoOverride se calcula la fecha de una semana con el calendario de
+  // OTRO curso escolar (p. ej. informes anuales de cursos anteriores); sin él,
+  // se usa el curso activo como siempre.
+  const curso = cursoOverride || getCurrentCurso();
   const planStart = getPlanStartForCurso(curso);
   const start = normalizeDate(planStart);
   start.setDate(start.getDate() + (weekNumber - 1) * 7);
@@ -1030,8 +1033,11 @@ function getEvaluationForWeek(weekNumber) {
   const evals = getEvaluacionesForCurso(curso);
   let cumul = 0;
   for (let i = 0; i < evals.length; i++) {
-    if (weekNumber <= cumul + evals[i].weeks) return i;
-    cumul += evals[i].weeks;
+    // parseInt: si `weeks` llega como string de Firestore, += lo concatena en
+    // vez de sumar y la asignación de trimestre se rompe a partir del 2º.
+    const w = parseInt(evals[i].weeks, 10) || 0;
+    if (weekNumber <= cumul + w) return i;
+    cumul += w;
   }
   return evals.length - 1;
 }
@@ -1049,7 +1055,14 @@ function getSemanaLectorActual() {
   const planStart = planStartRaw instanceof Date ? new Date(planStartRaw) : normalizeDate(planStartRaw);
   if (!planStart || isNaN(planStart.getTime())) return null;
   const hoy = new Date();
-  const week = Math.floor((hoy - planStart) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  // Comparar en días naturales (no en ms brutos): el cambio de hora (DST, finales
+  // de octubre en España) desplazaría 1 h la división y haría saltar la semana
+  // con un día de retraso o adelanto.
+  const hoyMid = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+  const planMid = new Date(planStart.getFullYear(), planStart.getMonth(), planStart.getDate());
+  // floor (no round): el viernes de la semana 1 está a 4 días del inicio y debe
+  // seguir contando como semana 1; round lo subía a la semana 2 desde el viernes.
+  const week = Math.floor((hoyMid - planMid) / (7 * 24 * 60 * 60 * 1000)) + 1;
   const total = totalWeeksOfEvals(getEvaluacionesDisplay(curso));
   if (week < 1 || week > total) return null;
   return { num: week, hour: getReadingHour(week), evalIdx: getEvaluationForWeek(week) };
@@ -1124,6 +1137,12 @@ const timers = {
   rm: null,
   cursos: null,
 };
+// Epoch de sesión: se incrementa en cada evento de auth (login/logout/cambio de
+// usuario). Las operaciones asíncronas (refreshes one-shot, guardados de perfil)
+// lo capturan al empezar y comprueban tras cada await: si cambió, la sesión ya
+// no es la misma y NO deben escribir los resultados en el estado (evita que los
+// datos del usuario que cerró sesión sobrevivan y los vea el siguiente).
+let _sessionEpoch = 0;
 
 const LECTOR_COLLECTION = "evidencias_lector";
 const RM_COLLECTION = "evidencias_rm";
@@ -1752,9 +1771,11 @@ async function ensureUserProfile(user, extra = {}) {
 
 async function updateUserProfile(uid, data) {
   const ref = doc(db, USUARIOS_COLLECTION, uid);
-  const snap = await getDoc(ref);
-  const existing = snap.exists() ? snap.data() : {};
-  const merged = { ...existing, ...data, uid, updatedAt: Date.now() };
+  // setDoc merge con SOLO los campos nuevos: no releer el documento y reenviarlo
+  // (read-modify-write), porque entre la lectura y la escritura otra escritura
+  // concurrente (otro admin, la migración de departamentos) se machacaría con
+  // los valores stale del objeto leído.
+  const merged = { ...data, uid, updatedAt: Date.now() };
   await setDoc(ref, merged, { merge: true });
   return { id: uid, ...merged };
 }
@@ -1956,7 +1977,7 @@ window._openResetPassDialog = (uid) => {
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Nueva contraseña *</label>
           <div class="flex gap-2">
-            <input id="rp-pass" type="text" placeholder="Mínimo 6 caracteres" class="flex-1 h-11 px-3 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none font-mono text-sm" />
+            <input id="rp-pass" type="password" autocomplete="new-password" placeholder="Mínimo 6 caracteres" class="flex-1 h-11 px-3 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none font-mono text-sm" />
             <button data-action="gen-temp-pass" class="px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-xs font-medium whitespace-nowrap" title="Generar contraseña aleatoria">
               <svg class="w-4 h-4 inline mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg>
               Generar
@@ -1965,7 +1986,7 @@ window._openResetPassDialog = (uid) => {
         </div>
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1">Repite la contraseña *</label>
-          <input id="rp-pass2" type="text" class="w-full h-11 px-3 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none font-mono text-sm" />
+          <input id="rp-pass2" type="password" autocomplete="new-password" class="w-full h-11 px-3 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none font-mono text-sm" />
         </div>
         <div class="bg-blue-50 border border-blue-200 rounded-md p-2.5 text-xs text-blue-800 flex items-start gap-2">
           <svg class="w-4 h-4 text-blue-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
@@ -2075,8 +2096,19 @@ window._confirmResetPass = async (uid) => {
       } catch (e2) {
         // La contraseña tecleada no es la de la cuenta de rescate (o la cuenta ya
         // no existe): se descarta el perfil residual y abajo se crea una cuenta nueva.
+        // Solo se descarta si el fallo es de credenciales/cuenta; con un error
+        // transitorio (red, servidor) se conserva el rescate para reintentarlo.
         console.warn("[resetPass] Cuenta de rescate no reutilizable:", e2.code || e2.message);
-        try { await deleteDoc(doc(db, USUARIOS_COLLECTION, rescate.id)); } catch (e3) {}
+        const codigo = e2 && e2.code ? String(e2.code) : "";
+        if (["auth/wrong-password", "auth/invalid-credential", "auth/user-not-found", "auth/invalid-login-credentials"].includes(codigo)) {
+          try { await deleteDoc(doc(db, USUARIOS_COLLECTION, rescate.id)); } catch (e3) {}
+        } else {
+          // Error transitorio (red/servidor): abortar el restablecimiento para no
+          // borrar el rescate ni crear una cuenta duplicada. El catch exterior lo
+          // propaga marcado para no tragárselo.
+          e2.abortReset = true;
+          throw e2;
+        }
       }
       // Cualquier OTRO rescate interrumpido del mismo usuario se descarta (perfiles
       // duplicados); sus cuentas Auth residuales solo se pueden limpiar desde
@@ -2087,7 +2119,10 @@ window._confirmResetPass = async (uid) => {
         }
       });
     }
-  } catch (e1) { console.warn("[resetPass] Búsqueda de restablecimientos a medias:", e1.code || e1.message); }
+  } catch (e1) {
+    if (e1 && e1.abortReset) throw new Error("No se pudo verificar la cuenta de rescate (" + (e1.code || e1.message) + "). Inténtalo de nuevo en unos segundos; no se ha cambiado la contraseña.");
+    console.warn("[resetPass] Búsqueda de restablecimientos a medias:", e1.code || e1.message);
+  }
 
   try {
     if (!newUid) {
@@ -2371,11 +2406,13 @@ async function refreshUsuariosNow() {
     return;
   }
   state.usuariosRefreshing = true;
+  const epoch = _sessionEpoch;
   try {
     // Sin orderBy (ver comentario en subscribeAllUsuarios): evita excluir perfiles
     // sin el campo createdAt.
     const q = collection(db, USUARIOS_COLLECTION);
     const snap = await getDocs(q);
+    if (epoch !== _sessionEpoch) return; // la sesión cambió durante el await
     const items = [];
     snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
     sortUsuarios(items);
@@ -2414,10 +2451,12 @@ function subscribeOwnProfile(uid, cb) {
 
 // Refresco puntual de evidencias (red de seguridad)
 async function refreshEvidenciasNow(which = "all") {
+  const epoch = _sessionEpoch;
   try {
     if (which === "all" || which === "lector") {
       const q = query(collection(db, LECTOR_COLLECTION), orderBy("createdAt", "desc"));
       const snap = await getDocs(q);
+      if (epoch !== _sessionEpoch) return; // la sesión cambió durante el await
       const items = [];
       snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
       _todasEvidenciasLector = items;
@@ -2425,6 +2464,7 @@ async function refreshEvidenciasNow(which = "all") {
     if (which === "all" || which === "rm") {
       const q = query(collection(db, RM_COLLECTION), orderBy("createdAt", "desc"));
       const snap = await getDocs(q);
+      if (epoch !== _sessionEpoch) return; // la sesión cambió durante el await
       const items = [];
       snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
       _todasEvidenciasRM = items;
@@ -2444,17 +2484,32 @@ async function refreshEvidenciasNow(which = "all") {
 // Se llama una vez al iniciar la app y se re-configura cuando el usuario inicia sesión.
 function setupGlobalSync() {
   // Limpiar suscripciones y timers previos
-  Object.values(subs).forEach(s => { try { s && s(); } catch (e) {} });
+  Object.values(subs).forEach(s => { try { if (s && typeof s === "function") s(); } catch (e) {} });
   Object.values(timers).forEach(t => { if (t) clearInterval(t); });
   subs.lector = subs.rm = subs.aportaciones = subs.usuarios = subs.cursos = subs.ownProfile = subs.cursoProfesores = null;
   timers.usuarios = timers.lector = timers.rm = timers.cursos = null;
 
-  // SIN SESIÓN INICIADA (pantalla de login): no suscribir nada. Las reglas de
-  // Firestore exigen request.auth != null para estas colecciones; suscribirse
-  // sin usuario solo llenaba la consola de "Missing or insufficient permissions"
-  // al arrancar y al cerrar sesión. Cuando alguien inicia sesión, el observer
-  // onAuthStateChanged vuelve a llamar aquí y se suscribe todo con permisos.
-  if (!state.user) return;
+  // SIN SESIÓN INICIADA (pantalla de login): no suscribir nada y, además, vaciar
+  // los datos en memoria del usuario que acaba de cerrar sesión: si otro usuario
+  // entra a continuación, el render inicial pinta ANTES de que llegue el primer
+  // snapshot, y sin esta limpieza vería evidencias, feedback y usuarios del
+  // anterior. Las reglas de Firestore exigen request.auth != null para estas
+  // colecciones; suscribirse sin usuario solo llenaba la consola de "Missing or
+  // insufficient permissions" al arrancar y al cerrar sesión.
+  if (!state.user) {
+    _todasEvidenciasLector = [];
+    _todasEvidenciasRM = [];
+    _todasAportaciones = [];
+    state.evidenciasLector = [];
+    state.evidenciasRM = [];
+    state.feedback = [];
+    state.usuarios = [];
+    state.usuariosError = null;
+    state.profesoresPorCurso = {};
+    state.forcedCursoId = null;
+    try { localStorage.removeItem("forcedCursoId"); } catch (e) {}
+    return;
+  }
 
   // 1) Suscripción en tiempo real a evidencias Lector
   subs.lector = subscribeAllLector((items) => {
@@ -2565,10 +2620,12 @@ function setupGlobalSync() {
   // 7) Refresco al volver a la pestaña (visibility change)
   // El onSnapshot puede morir silenciosamente tras un error de permisos; al volver
   // a la pestaña forzamos una lectura puntual para garantizar datos frescos.
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
   document.addEventListener("visibilitychange", handleVisibilityChange);
 }
 
-// Handler de visibility change (definido fuera para poder quitarlo si hace falta)
+  // Handler de visibility change (definido fuera para poder quitarlo si hace falta)
+let _lastResubscribeTs = 0;
 function handleVisibilityChange() {
   if (document.visibilityState === "visible" && state.user) {
     // Si había un aviso de reglas pintado, comprobar en segundo plano si las
@@ -2578,30 +2635,13 @@ function handleVisibilityChange() {
     refreshEvidenciasNow("all");
     if (isAdmin()) refreshUsuariosNow();
     // Re-suscribir por si las suscripciones anteriores murieron
-    // (lo hacemos solo si hace más de 5 min que no se re-configura, para no abusar)
-    if (!subs._lastResubscribe || Date.now() - subs._lastResubscribe > 5 * 60 * 1000) {
-      // Re-crear las suscripciones en tiempo real (no las propias, que se re-crean en setupGlobalSync)
-      try { subs.lector && subs.lector(); } catch (e) {}
-      try { subs.rm && subs.rm(); } catch (e) {}
-      try { subs.usuarios && subs.usuarios(); } catch (e) {}
-      try { subs.cursos && subs.cursos(); } catch (e) {}
-      subs.lector = subscribeAllLector((items) => {
-        _todasEvidenciasLector = items || [];
-        filtrarEvidenciasPorCursoActivo();
-        if (state.user && ["cronograma-lector", "informes", "plan-lector"].includes(state.view.name)) safeRenderMain("lector-resubscribe");
-      });
-      subs.rm = subscribeAllRM((items) => {
-        _todasEvidenciasRM = items || [];
-        filtrarEvidenciasPorCursoActivo();
-        if (state.user && ["curso-rm", "informes", "razonamiento-matematico"].includes(state.view.name)) safeRenderMain("rm-resubscribe");
-      });
-      _crearSubUsuarios("usuarios-resubscribe");
-      subs.cursos = subscribeAllCursos((items) => {
-        state.cursos = mergeCursos(items);
-        filtrarEvidenciasPorCursoActivo();
-        if (state.user && ["cursos-escolares", "informes", "cronograma-lector", "curso-rm"].includes(state.view.name)) safeRenderMain("cursos-resubscribe");
-      });
-      subs._lastResubscribe = Date.now();
+    // (lo hacemos solo si hace más de 5 min que no se re-configura, para no abusar).
+    // setupGlobalSync() re-crea TODAS las suscripciones (lector, rm, usuarios,
+    // cursos, perfil propio, aportaciones) y los timers, con el guard de sesión;
+    // antes solo se re-creaban 4 y ownProfile/aportaciones podían quedar muertas.
+    if (!_lastResubscribeTs || Date.now() - _lastResubscribeTs > 5 * 60 * 1000) {
+      setupGlobalSync();
+      _lastResubscribeTs = Date.now();
     }
   }
 }
@@ -2613,7 +2653,7 @@ function subscribeAllCursos(cb) {
   const q = collection(db, CURSOS_COLLECTION);
   return onSnapshot(q, (snap) => {
     const items = [];
-    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+    snap.forEach((d) => items.push({ ...d.data(), id: d.id }));
     items.sort((a, b) => (b.id || "").localeCompare(a.id || ""));
     cb(items);
   }, (err) => {
@@ -3584,7 +3624,7 @@ function viewCronogramaLector() {
             <summary class="px-4 py-3 hover:bg-slate-50 bg-gradient-to-r from-blue-50 to-cyan-50 flex items-center justify-between" data-action="toggle-eval" data-idx="${idx}">
               <div class="flex items-center gap-2 text-left">
                 <svg class="w-4 h-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span class="font-bold text-slate-800 text-sm sm:text-base">${s.eval.name}</span>
+                <span class="font-bold text-slate-800 text-sm sm:text-base">${escapeHtml(s.eval.name)}</span>
                 <span class="text-xs text-slate-500 hidden sm:inline">(${s.eval.weeks} semanas · ${formatDateES(new Date(s.eval.start))} → ${formatDateES(new Date(s.eval.end))})</span>
               </div>
               <svg class="w-4 h-4 text-slate-400 acc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -4341,7 +4381,7 @@ function viewCursoRM(cursoId) {
 
   // Generate schedule
   const EVALS = getEvaluacionesForCurso(getCurrentCurso());
-  const totalWeeks = EVALS.reduce((a, e) => a + e.weeks, 0);
+  const totalWeeks = EVALS.reduce((a, e) => a + (parseInt(e.weeks, 10) || 0), 0);
   const schedule = [];
   for (let w = 1; w <= totalWeeks; w++) {
     const { start, end } = getWeekDates(w);
@@ -4460,7 +4500,7 @@ function viewCursoRM(cursoId) {
             <summary class="px-4 py-3 hover:bg-slate-50 bg-gradient-to-r from-purple-50 to-indigo-50 flex items-center justify-between" data-action="toggle-eval" data-idx="${idx}">
               <div class="flex items-center gap-2 text-left">
                 <svg class="w-4 h-4 text-purple-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span class="font-bold text-slate-800 text-sm sm:text-base">${g.eval.name}</span>
+                <span class="font-bold text-slate-800 text-sm sm:text-base">${escapeHtml(g.eval.name)}</span>
                 <span class="text-xs text-slate-500 hidden sm:inline">(${g.eval.weeks} semanas)</span>
               </div>
               <svg class="w-4 h-4 text-slate-400 acc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -4502,7 +4542,7 @@ function renderWeekRM(sem, curso, isVisible, getEv) {
         }
         <p class="text-[10px] text-slate-500 mt-1"><span class="font-mono bg-slate-100 px-1 py-0.5 rounded">${s.codigo}</span></p>
         <div class="mt-2 flex flex-wrap gap-1.5">
-          <button data-action="open-ev-rm" data-mode="create" data-grupo="" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${s.materia}" data-actividad="${s.actividad}" data-codigo="${s.codigo}"
+          <button data-action="open-ev-rm" data-mode="create" data-grupo="" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${escapeHtml(s.materia)}" data-actividad="${escapeHtml(s.actividad)}" data-codigo="${escapeHtml(s.codigo)}"
             class="text-[10px] sm:text-xs px-2 py-1 rounded-md bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 transition inline-flex items-center gap-1"
             title="Registrar la actividad en varios grupos a la vez (selección múltiple)">
             👥 Varios grupos
@@ -4511,13 +4551,13 @@ function renderWeekRM(sem, curso, isVisible, getEv) {
             const ev = getEv(g, sem.num, s.sesion);
             if (ev) {
               const canEdit = canEditEvidencia(ev);
-              return `<button data-action="${canEdit ? 'edit-ev-rm' : 'view-ev-rm'}" data-id="${ev.id}" data-sesion="${s.sesion}" data-materia="${s.materia}" data-actividad="${s.actividad}" data-codigo="${s.codigo}"
+              return `<button data-action="${canEdit ? 'edit-ev-rm' : 'view-ev-rm'}" data-id="${ev.id}" data-sesion="${s.sesion}" data-materia="${escapeHtml(s.materia)}" data-actividad="${escapeHtml(s.actividad)}" data-codigo="${escapeHtml(s.codigo)}"
                 class="text-[10px] sm:text-xs px-2 py-1 rounded-md ${canEdit ? 'bg-emerald-50 border border-emerald-400 text-emerald-700 hover:bg-emerald-100' : 'bg-slate-100 border border-slate-300 text-slate-600 hover:bg-slate-200'} transition inline-flex items-center gap-1"
                 title="${escapeHtml(ev.profesor || 'Sin nombre')}: ${escapeHtml(ev.actividadRealizada || '')}${canEdit ? ' (puedes editar)' : ' (solo lectura)'}">
                 ${canEdit ? '✓' : '🔒'} ${g}
               </button>`;
             }
-            return `<button data-action="open-ev-rm" data-mode="create" data-grupo="${g}" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${s.materia}" data-actividad="${s.actividad}" data-codigo="${s.codigo}"
+            return `<button data-action="open-ev-rm" data-mode="create" data-grupo="${g}" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${escapeHtml(s.materia)}" data-actividad="${escapeHtml(s.actividad)}" data-codigo="${escapeHtml(s.codigo)}"
               class="text-[10px] sm:text-xs px-2 py-1 rounded-md bg-slate-50 border border-slate-300 text-slate-600 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-700 transition inline-flex items-center gap-1">
               + ${g}
             </button>`;
@@ -4572,9 +4612,13 @@ function renderReportsPanel(curso, schedule) {
         <div class="space-y-2 p-3 rounded-lg border border-slate-200 bg-slate-50">
           <p class="text-xs font-bold text-slate-700">Informe por trimestre</p>
           <div class="space-y-1 text-xs">
-            <label class="flex items-center gap-2"><input type="checkbox" id="rpt-tri1" /> 1º trimestre (S1-S14)</label>
-            <label class="flex items-center gap-2"><input type="checkbox" id="rpt-tri2" /> 2º trimestre (S15-S25)</label>
-            <label class="flex items-center gap-2"><input type="checkbox" id="rpt-tri3" /> 3º trimestre (S26-S36)</label>
+            ${(() => {
+              // Rango de semanas de cada evaluación según el calendario del curso
+              const evs = getEvaluacionesForCurso(curso);
+              let cum = 1;
+              const rangos = evs.map(ev => { const a = cum, b = cum + (parseInt(ev.weeks, 10) || 1) - 1; cum += parseInt(ev.weeks, 10) || 1; return `S${a}-S${b}`; });
+              return [1, 2, 3].map(n => `<label class="flex items-center gap-2"><input type="checkbox" id="rpt-tri${n}" /> ${n}º trimestre (${rangos[n-1] || "—"})</label>`).join("");
+            })()}
           </div>
           <button data-action="generate-trimestre-pdf" data-curso-id="${curso.id}" data-curso-nombre="${curso.nombre}" class="w-full mt-2 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">Generar PDF</button>
         </div>
@@ -4593,7 +4637,7 @@ window._generateSubjectPDF = (cursoId, cursoNombre) => {
 
   // Usar evaluaciones del curso actual en vez de constantes globales
   const EVALS = getEvaluacionesForCurso(getCurrentCurso());
-  const totalWeeks = EVALS.reduce((a, e) => a + e.weeks, 0);
+  const totalWeeks = EVALS.reduce((a, e) => a + (parseInt(e.weeks, 10) || 0), 0);
 
   // Materias específicas del curso
   const curso = RM_CURSOS.find(c => c.id === cursoId);
@@ -4655,9 +4699,17 @@ window._generateTrimestrePDF = (cursoId, cursoNombre) => {
   const tri2 = document.getElementById("rpt-tri2").checked;
   const tri3 = document.getElementById("rpt-tri3").checked;
   const wanted = [];
-  if (tri1) for (let i = 1; i <= 14; i++) wanted.push(i);
-  if (tri2) for (let i = 15; i <= 25; i++) wanted.push(i);
-  if (tri3) for (let i = 26; i <= 36; i++) wanted.push(i);
+  // Rangos de semanas por trimestre derivados del calendario real del curso
+  // (evaluaciones configuradas), no de los cortes fijos 1-14/15-25/26-36.
+  const curso = state.cursos.find(c => c.id === cursoId) || getCurrentCurso();
+  const evals = getEvaluacionesForCurso(curso);
+  const triRanges = [];
+  let cum = 1;
+  for (const ev of evals) { triRanges.push([cum, cum + (parseInt(ev.weeks, 10) || 1) - 1]); cum += parseInt(ev.weeks, 10) || 1; }
+  const rango = (idx) => triRanges[idx] ? `S${triRanges[idx][0]}-S${triRanges[idx][1]}` : "—";
+  if (tri1 && triRanges[0]) for (let i = triRanges[0][0]; i <= triRanges[0][1]; i++) wanted.push(i);
+  if (tri2 && triRanges[1]) for (let i = triRanges[1][0]; i <= triRanges[1][1]; i++) wanted.push(i);
+  if (tri3 && triRanges[2]) for (let i = triRanges[2][0]; i <= triRanges[2][1]; i++) wanted.push(i);
   if (wanted.length === 0) { alert("Selecciona al menos un trimestre."); return; }
 
   const evs = state.evidenciasRM.filter(e => e.cursoId === cursoId && wanted.includes(e.semana));
@@ -4666,7 +4718,7 @@ window._generateTrimestrePDF = (cursoId, cursoNombre) => {
   const doc = new jsPDF();
   doc.setFontSize(16); doc.text(`Informe RM por Trimestre - ${cursoNombre}`, 14, 18);
   doc.setFontSize(11);
-  doc.text(`Trimestres: ${[tri1 && "1º (S1-S14)", tri2 && "2º (S15-S25)", tri3 && "3º (S26-S36)"].filter(Boolean).join(", ")}`, 14, 26);
+  doc.text(`Trimestres: ${[tri1 && `1º (${rango(0)})`, tri2 && `2º (${rango(1)})`, tri3 && `3º (${rango(2)})`].filter(Boolean).join(", ")}`, 14, 26);
   doc.text(`Evidencias: ${evs.length}`, 14, 32);
 
   const rows = evs.sort((a, b) => a.semana - b.semana || a.sesion - b.sesion).map(e => [
@@ -5128,7 +5180,10 @@ window._savePerfil = async () => {
     }
     // Actualizar perfil en Firestore
     const updated = await updateUserProfile(state.user.uid, { displayName: nombre, department: departamento });
-    state.userProfile = updated;
+    if (!state.user) return; // la sesión se cerró durante el await
+    // updateUserProfile devuelve solo los campos escritos: mezclar con el perfil
+    // vigente para no perder role/username/etc. (isAdmin() depende de ello).
+    state.userProfile = { ...state.userProfile, ...updated };
     success.textContent = "Perfil actualizado correctamente.";
     success.classList.remove("hidden");
     btn.disabled = false;
@@ -5397,7 +5452,10 @@ window._showInformeModal = () => {
   let evsLector = state.evidenciasLector.filter(e => e.fecha && inRange(e.fecha));
   let evsRM = state.evidenciasRM.filter(e => {
     if (!e.semana) return false;
-    const { start } = getWeekDates(e.semana);
+    // Mapear la semana con el calendario del curso de la evidencia (los informes
+    // anuales pueden abarcar cursos escolares distintos al activo).
+    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || curso;
+    const { start } = getWeekDates(e.semana, cursoEv);
     return inRange(dateToISO(start));
   });
   if (area) {
@@ -5514,7 +5572,7 @@ window._renderFechasContainer = () => {
   } else if (period === "semanal") {
     // Generar listado de semanas del curso
     const EVALS = getEvaluacionesForCurso(curso);
-    const totalWeeks = EVALS.reduce((a, e) => a + e.weeks, 0);
+    const totalWeeks = EVALS.reduce((a, e) => a + (parseInt(e.weeks, 10) || 0), 0);
     const weeks = [];
     for (let w = 1; w <= totalWeeks; w++) {
       const { start, end } = getWeekDates(w);
@@ -5582,7 +5640,7 @@ window._generateInforme = () => {
     fechaInicio = f; fechaFin = f;
     periodLabel = `Día ${formatDateES(new Date(f))}`;
   } else if (period === "semanal") {
-    const wnum = parseInt(document.getElementById("rpt-semana").value);
+    const wnum = parseInt(document.getElementById("rpt-semana")?.value || "1", 10);
     const { start, end } = getWeekDates(wnum);
     fechaInicio = dateToISO(start); fechaFin = dateToISO(end);
     periodLabel = `Semana ${wnum} (${formatDateES(start)} → ${formatDateES(end)})`;
@@ -5605,7 +5663,10 @@ window._generateInforme = () => {
   let evsRM = state.evidenciasRM.filter(e => {
     // Para RM usamos la fecha de la semana (lunes)
     if (!e.semana) return false;
-    const { start } = getWeekDates(e.semana);
+    // Mapear la semana con el calendario del curso de la evidencia (los informes
+    // anuales pueden abarcar cursos escolares distintos al activo).
+    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || curso;
+    const { start } = getWeekDates(e.semana, cursoEv);
     return inRange(dateToISO(start));
   });
 
@@ -5691,7 +5752,8 @@ window._generateInforme = () => {
 
     if (evsRM.length > 0) {
       const rows = evsRM.map(e => {
-        const { start } = getWeekDates(e.semana);
+        const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || curso;
+        const { start } = getWeekDates(e.semana, cursoEv);
         return [
           `S${e.semana}`,
           dateToISO(start),
@@ -6435,8 +6497,12 @@ function _parseFechaDMY(s) {
   if (!m) return null;
   let y = parseInt(m[3], 10);
   if (y < 100) y += 2000;
-  const d = new Date(y, parseInt(m[2], 10) - 1, parseInt(m[1], 10));
-  return isNaN(d) ? null : d;
+  const dd = parseInt(m[1], 10), mm = parseInt(m[2], 10);
+  const d = new Date(y, mm - 1, dd);
+  // new Date(y, m, 31/02...) "enrolla" al mes siguiente sin dar NaN: validar
+  // que el día y el mes resultantes coinciden con los pedidos.
+  if (isNaN(d) || d.getDate() !== dd || d.getMonth() !== mm - 1) return null;
+  return d;
 }
 
 function _formatDMY(d) {
@@ -6635,7 +6701,10 @@ window._importUsuariosExcel = async () => {
         return "";
       };
 
-      usuarios = rows.map(r => ({
+      usuarios = rows.map((r, idx) => ({
+        // Fila real del Excel (1 = cabecera): se conserva a través del filtro de
+        // validez para que los mensajes de error apunten a la fila correcta.
+        _fila: idx + 2,
         nombre: String(findCol(r, ["Nombre", "Nombre y apellidos", "Nombre y Apellidos"])).trim(),
         apellidos: String(findCol(r, ["Apellidos", "apellidos", "Surname"])).trim(),
         username: normalizeUsername(String(findCol(r, ["Usuario", "usuario", "user"]))),
@@ -6658,12 +6727,12 @@ window._importUsuariosExcel = async () => {
     const errores = [];
     const seen = new Set();
     usuarios.forEach((u, i) => {
-      if (u.nombre.length < 3) errores.push(`Fila ${i + 2}: nombre demasiado corto`);
-      if (!isValidUsername(u.username)) errores.push(`Fila ${i + 2}: usuario "${escapeHtml(u.username)}" no válido (3-30 caracteres: minúsculas, números, punto, guion o guion bajo)`);
-      if (u.pass.length < 6) errores.push(`Fila ${i + 2}: contraseña demasiado corta`);
-      if (u.rol && !["profesor", "admin"].includes(u.rol)) errores.push(`Fila ${i + 2}: rol "${escapeHtml(u.rol)}" no válido (profesor o admin)`);
-      if (u.departamento && !DEPARTAMENTOS.includes(u.departamento)) errores.push(`Fila ${i + 2}: departamento "${escapeHtml(u.departamento)}" no pertenece al centro`);
-      if (seen.has(u.username)) errores.push(`Fila ${i + 2}: usuario "${escapeHtml(u.username)}" duplicado en el archivo`);
+      if (u.nombre.length < 3) errores.push(`Fila ${u._fila}: nombre demasiado corto`);
+      if (!isValidUsername(u.username)) errores.push(`Fila ${u._fila}: usuario "${escapeHtml(u.username)}" no válido (3-30 caracteres: minúsculas, números, punto, guion o guion bajo)`);
+      if (u.pass.length < 6) errores.push(`Fila ${u._fila}: contraseña demasiado corta`);
+      if (u.rol && !["profesor", "admin"].includes(u.rol)) errores.push(`Fila ${u._fila}: rol "${escapeHtml(u.rol)}" no válido (profesor o admin)`);
+      if (u.departamento && !DEPARTAMENTOS.includes(u.departamento)) errores.push(`Fila ${u._fila}: departamento "${escapeHtml(u.departamento)}" no pertenece al centro`);
+      if (seen.has(u.username)) errores.push(`Fila ${u._fila}: usuario "${escapeHtml(u.username)}" duplicado en el archivo`);
       seen.add(u.username);
     });
     if (errores.length > 0) {
@@ -7400,10 +7469,12 @@ window._confirmBulkDelete = async () => {
     } catch (e) {
       resultados.push({ uid, ok: false, rep: { perfil: false, evidenciasLector: 0, evidenciasRM: 0, errors: [String(e?.code || e?.message || e)] } });
     }
-    // Optimismo local: quitar de la lista y de la selección. El diálogo sigue
-    // abierto, así que renderUsuariosDynamic no pisa la tabla hasta el final.
-    state.usuarios = state.usuarios.filter((x) => (x.uid || x.id) !== uid);
-    state.bulkSel.delete(uid);
+    // Optimismo local solo si el borrado salió bien: si falló, el usuario sigue
+    // existiendo y la tabla debe seguir mostrándolo (queda marcado para reintento).
+    if (resultados[resultados.length - 1].ok) {
+      state.usuarios = state.usuarios.filter((x) => (x.uid || x.id) !== uid);
+      state.bulkSel.delete(uid);
+    }
   }
 
   window._closeBulkDeleteDialog();
@@ -7412,7 +7483,9 @@ window._confirmBulkDelete = async () => {
   const fallidos = resultados.filter((r) => !r.ok);
   const totLector = ok.reduce((a, r) => a + (r.rep.evidenciasLector || 0), 0);
   const totRM = ok.reduce((a, r) => a + (r.rep.evidenciasRM || 0), 0);
-  const selfBorrado = incluyeSelf && resultados.some((r) => r.uid === selfUid && r.ok);
+  // Basta con que el perfil propio se haya borrado (aunque alguna evidencia
+  // asociada diera error): sin perfil, la sesión queda inválida y hay que cerrarla.
+  const selfBorrado = incluyeSelf && resultados.some((r) => r.uid === selfUid && r.rep.perfil);
 
   let msg = `Eliminación masiva completada.\n\nUsuarios eliminados: ${ok.length} de ${uids.length}\nEvidencias Lector borradas: ${totLector}\nEvidencias RM borradas: ${totRM}\n`;
   if (fallidos.length > 0) {
@@ -8183,6 +8256,7 @@ try {
 onAuthStateChanged(auth, async (user) => {
   // Capturar el usuario local para evitar race conditions
   const localUser = user;
+  _sessionEpoch++;
   state.user = localUser;
   window._sesionHuerfanaGestionada = false;
   if (localUser) {
