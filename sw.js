@@ -1,21 +1,22 @@
-// Service Worker para nmaspi.html (app de archivo ÚNICO)
+// Service Worker (app de archivo ÚNICO)
 // Estrategia: network-first para navegación (HTML), cache-first para el resto de
 // assets estáticos, con actualización en segundo plano.
 //
-// IMPORTANTE (v2.13): la precarga inicial solo incluye el archivo REAL de la app
-// (nmaspi.html). La lista antigua (index.html, app.js, styles.css, manifest.json,
-// icon-*.png) apuntaba a ficheros que NO existen en el despliegue: cache.addAll()
-// fallaba, el evento install terminaba en error y el SW nunca llegaba a activarse
-// (sin PWA offline y sin caché). Además, la instalación ahora es RESILIENTE: si
-// algún asset falla, se precachea el resto en vez de abortar todo.
+// IMPORTANTE: la precarga inicial solo incluye los ficheros HTML REALES del
+// despliegue (NMasPi.html e index.html). Una lista antigua apuntaba a
+// 'nmaspi.html' (en minúsculas), que NO existe en GitHub Pages (404): el precache
+// fallaba en silencio y la PWA se quedaba sin fallback offline. Además, la
+// instalación es RESILIENTE: si algún asset falla, se precachea el resto en vez
+// de abortar todo.
 //
 // Al publicar una versión nueva de la app: sube CACHE_NAME al mismo número de
-// APP_VERSION de nmaspi.html. La activación borra las cachés antiguas y
-// skipWaiting()+clients.claim() ponen la versión nueva en marcha al momento.
+// APP_VERSION de index.html / NMasPi.html. La activación borra las cachés
+// antiguas y skipWaiting()+clients.claim() ponen la versión nueva en marcha.
 
-const CACHE_NAME = 'nmaspi-v2.35';
-const STATIC_ASSETS = [
-  './nmaspi.html',
+const CACHE_NAME = 'nmaspi-v2.36';
+const APP_PAGES = [
+  './NMasPi.html',
+  './index.html',
 ];
 
 // Instalación: precachear assets estáticos (resiliente: un asset que falte no
@@ -23,18 +24,18 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => Promise.allSettled(STATIC_ASSETS.map(a => cache.add(a))))
+      .then(cache => Promise.allSettled(APP_PAGES.map(a => cache.add(a))))
       .then(() => self.skipWaiting())
       .catch(err => console.warn('[SW] Error en install:', err))
   );
 });
 
-// Activación: limpiar caches antiguos (incluida cualquier 'planes-ies-*' previa)
+// Activación: limpiar cachés antiguas (nmaspi-* y cualquier 'planes-ies-*' previa)
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
       .then(keys => Promise.all(
-        keys.filter(k => k !== CACHE_NAME && k.startsWith('nmaspi-')).map(k => caches.delete(k))
+        keys.filter(k => k !== CACHE_NAME && (k.startsWith('nmaspi-') || k.startsWith('planes-ies-'))).map(k => caches.delete(k))
       ))
       .then(() => self.clients.claim())
   );
@@ -61,16 +62,22 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Navegación (HTML): network-first, fallback a cache
+  // Navegación (HTML): network-first, fallback a cache. Solo se cachean
+  // respuestas correctas (un 404/500 del hosting no debe pisar la buena copia).
   if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
     e.respondWith(
       fetch(req)
         .then(res => {
-          const clone = res.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
+          if (res && res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(req, clone));
+          }
           return res;
         })
-        .catch(() => caches.match(req).then(r => r || caches.match('./nmaspi.html')))
+        .catch(() => caches.match(req)
+          .then(r => r || caches.match('./NMasPi.html'))
+          .then(r => r || caches.match('./index.html'))
+        )
     );
     return;
   }
