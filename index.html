@@ -781,7 +781,7 @@ function _departamentosPendientesMigracion(items) {
   (items || []).forEach((u) => {
     if (!u) return;
     const uid = u.uid || u.id;
-    const antiguo = String(u.department || "").trim();
+    const antiguo = String(u._departmentRaw || u.department || "").trim();
     const nuevo = antiguo ? (DEPARTAMENTOS_ALIAS[antiguo] || "") : "";
     if (uid && nuevo && nuevo !== antiguo) pendientes.push({ uid, from: antiguo, to: nuevo });
   });
@@ -1318,6 +1318,7 @@ function _pintarAvisoReglas() {
   };
 }
 function _mostrarAvisoReglasSiToca() {
+  if (!state.user) return;
   if (!_avisoReglasPendiente || _avisoReglasMostrado || !isAdmin() || _avisoReglasVerificando) return;
   _avisoReglasVerificando = true;
   // Anti-falso-positivo (v2.14): un permission-denied TAMBIÉN ocurre cuando la
@@ -2284,7 +2285,18 @@ function sortUsuarios(items) {
   // La PERSISTENCIA en Firestore la hace la migración automática
   // (_migrarDepartamentosFirestore), enganchada a la suscripción, al refresco
   // puntual y a la carga del perfil.
-  items.forEach((u) => { if (u && u.department) u.department = _normalizarDepartamento(u.department); });
+  items.forEach((u) => {
+    if (!u || !u.department) return;
+    const norm = _normalizarDepartamento(u.department);
+    if (norm && norm !== u.department) {
+      // Conservar el valor original de Firestore: _departamentosPendientesMigracion
+      // lo necesita (si se normaliza antes de detectar, la migración nunca ve el
+      // nombre antiguo y el renombre no se persiste nunca).
+      u._departmentRaw = u.department;
+      u.department = norm;
+    }
+    // Si norm es "" (sin coincidencia con el catálogo), se conserva el original.
+  });
   items.sort((a, b) => {
     const cmp = _compareUsuariosPorApellidos(a, b);
     if (cmp !== 0) return cmp;
@@ -2764,7 +2776,7 @@ function renderLogin() {
           </div>
           <h1 class="text-xl sm:text-2xl font-bold text-slate-800 leading-tight">Planes Lector y de Razonamiento Matemático</h1>
           <p class="text-sm text-slate-600 mt-1">${INSTITUTO.nombre} — ${INSTITUTO.localidad}</p>
-          <p class="text-xs text-slate-500">Curso ${INSTITUTO.curso}</p>
+          <p class="text-xs text-slate-500">Curso ${escapeHtml(INSTITUTO.curso)}</p>
         </div>
 
         <div class="bg-white rounded-2xl shadow-xl border border-slate-200 p-5 sm:p-6 space-y-3">
@@ -2836,6 +2848,9 @@ function renderLogin() {
   };
 
   const doLogin = async () => {
+    // Guard de doble submit: Enter/pulsaciones repetidas con red lenta lanzaban
+    // dos signIn concurrentes.
+    if (document.getElementById("btn-login")?.disabled) return;
     const identRaw = document.getElementById("login-user").value.trim();
     const pass = document.getElementById("login-pass").value;
     const err = document.getElementById("login-error");
@@ -2901,6 +2916,9 @@ function renderLogin() {
 
   // ---- Panel de arranque: crear el primer administrador ----
   const doBootstrapAdmin = async () => {
+    // Guard de doble submit: el botón solo se desactivaba tras dos getDoc, y en
+    // ese hueco un segundo clic/Enter creaba la cuenta dos veces.
+    if (document.getElementById("btn-bootstrap")?.disabled) return;
     const nombre = document.getElementById("boot-nombre").value.trim();
     const username = normalizeUsername(document.getElementById("boot-user").value);
     const pass = document.getElementById("boot-pass").value;
@@ -3102,7 +3120,7 @@ function renderAppShell() {
             </div>
             <div class="hidden sm:block min-w-0">
               <p class="text-sm font-bold text-slate-800 leading-tight truncate">Planes IES</p>
-              <p class="text-[10px] text-slate-500 leading-tight truncate">${INSTITUTO.nombre} · Curso ${INSTITUTO.curso}${state.forcedCursoId ? ' 🔒' : ''}</p>
+              <p class="text-[10px] text-slate-500 leading-tight truncate">${INSTITUTO.nombre} · Curso ${escapeHtml(INSTITUTO.curso)}${state.forcedCursoId ? ' 🔒' : ''}</p>
             </div>
           </button>
 
@@ -3206,7 +3224,7 @@ function renderAppShell() {
           <div class="mt-auto p-4 border-t border-slate-200 text-xs text-slate-500">
             <p class="font-semibold text-slate-700">${INSTITUTO.nombre}</p>
             <p>${INSTITUTO.localidad}</p>
-            <p class="mt-1">Curso ${INSTITUTO.curso}</p>
+            <p class="mt-1">Curso ${escapeHtml(INSTITUTO.curso)}</p>
           </div>
         </div>
       </div>
@@ -3232,7 +3250,7 @@ function renderAppShell() {
       <footer class="mt-auto bg-white/70 border-t border-slate-200 safe-bottom">
         <div class="max-w-6xl mx-auto px-3 sm:px-4 py-4 text-center text-xs text-slate-500">
           <p class="font-semibold text-slate-700">${INSTITUTO.nombre}</p>
-          <p class="mt-0.5">${INSTITUTO.localidad} · Curso ${INSTITUTO.curso} · Planes Lector y de Razonamiento Matemático</p>
+          <p class="mt-0.5">${INSTITUTO.localidad} · Curso ${escapeHtml(INSTITUTO.curso)} · Planes Lector y de Razonamiento Matemático</p>
         </div>
       </footer>
 
@@ -3413,7 +3431,7 @@ function viewHome() {
         </div>
         <h1 class="text-2xl sm:text-4xl font-bold leading-tight">Planes Lector y de Razonamiento Matemático</h1>
         <p class="mt-2 text-sm sm:text-base text-white/90">${INSTITUTO.nombre} · ${INSTITUTO.localidad}</p>
-        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${INSTITUTO.curso}
+        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${escapeHtml(INSTITUTO.curso)}
           <span id="chip-app-version" title="Versión de la aplicación" class="ml-1.5 inline-flex items-center rounded-full bg-white/15 border border-white/25 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-white/90 align-middle">v${APP_VERSION}</span>
         </p>
         <a href="${isAdmin() ? MANUALES_USUARIO.admin : MANUALES_USUARIO.profesorado}" target="_blank" rel="noopener" title="Manual de usuario en PDF (se abre en una ventana nueva)" class="absolute bottom-2.5 right-2.5 sm:bottom-4 sm:right-4 inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/30 border border-white/25 px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs font-semibold text-white transition">
@@ -3496,7 +3514,7 @@ function viewPlanLectorHome() {
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h1 class="text-xl sm:text-3xl font-bold">Plan para el Refuerzo de la Competencia Lingüística</h1>
-            <p class="text-sm sm:text-base text-white/90 mt-1">${INSTITUTO.nombre} — Curso ${INSTITUTO.curso}</p>
+            <p class="text-sm sm:text-base text-white/90 mt-1">${INSTITUTO.nombre} — Curso ${escapeHtml(INSTITUTO.curso)}</p>
           </div>
           <div class="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white/15 backdrop-blur-sm shrink-0">
             <svg class="w-7 h-7 sm:w-8 sm:h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
@@ -3825,6 +3843,7 @@ window._editEvidenciaLector = (id) => {
 
 function openEvidenciaLectorDialog(data) {
   const overlay = document.createElement("div");
+  document.getElementById("ev-lector-dialog")?.remove();
   overlay.id = "ev-lector-dialog";
   overlay.className = "fixed inset-0 z-50 flex items-center justify-center p-3";
   const ev = data.existing;
@@ -3984,6 +4003,7 @@ function _feedbackAutorNombre() {
 function openFeedbackDialog(opts = {}) {
   _currentFeedback = { tipo: opts.tipo === "rm" ? "rm" : "lectura", mode: opts.mode === "list" ? "list" : "form", editId: opts.editId || null };
   const overlay = document.createElement("div");
+  document.getElementById("feedback-dialog")?.remove();
   overlay.id = "feedback-dialog";
   overlay.className = "fixed inset-0 z-50 flex items-center justify-center p-3";
   overlay.innerHTML = `
@@ -4281,7 +4301,7 @@ function viewRMHome() {
         <div class="flex items-start justify-between gap-3">
           <div>
             <h1 class="text-xl sm:text-3xl font-bold">Plan de Razonamiento Matemático</h1>
-            <p class="text-sm sm:text-base text-white/90 mt-1">${INSTITUTO.nombre} — Curso ${INSTITUTO.curso}</p>
+            <p class="text-sm sm:text-base text-white/90 mt-1">${INSTITUTO.nombre} — Curso ${escapeHtml(INSTITUTO.curso)}</p>
           </div>
           <button data-action="toggle-help" data-key="rm-home" class="bg-white/15 hover:bg-white/25 text-white border border-white/20 rounded-lg px-3 py-1.5 text-sm font-medium shrink-0 flex items-center gap-1.5">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -4816,6 +4836,7 @@ window._editEvidenciaRM = (id, sesion, materia, actividad, codigo) => {
 
 function openEvidenciaRMDialog(data) {
   const overlay = document.createElement("div");
+  document.getElementById("ev-rm-dialog")?.remove();
   overlay.id = "ev-rm-dialog";
   overlay.className = "fixed inset-0 z-50 flex items-center justify-center p-3";
   const ev = data.existing;
@@ -5154,7 +5175,7 @@ function viewMiPerfil() {
         <h3 class="text-sm font-bold text-slate-800 mb-3">Información de la cuenta</h3>
         <dl class="text-sm space-y-1.5">
           <div class="flex justify-between"><dt class="text-slate-500">Fecha de alta:</dt><dd class="text-slate-700 font-medium">${createdAt}</dd></div>
-          <div class="flex justify-between"><dt class="text-slate-500">Curso actual:</dt><dd class="text-slate-700 font-medium">${INSTITUTO.curso}</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">Curso actual:</dt><dd class="text-slate-700 font-medium">${escapeHtml(INSTITUTO.curso)}</dd></div>
           <div class="flex justify-between"><dt class="text-slate-500">Identificador:</dt><dd class="text-slate-700 font-mono text-xs">${state.user?.uid?.slice(0, 12) || "—"}…</dd></div>
         </dl>
       </div>
@@ -5282,7 +5303,7 @@ function viewInformes() {
               Informes de uso
             </h1>
             <p class="text-sm text-white/85 mt-1">Genera informes en PDF del uso de los Planes Lector y de Razonamiento Matemático · curso ${escapeHtml(curso.label || curso.id || "")}</p>
-            <p class="text-xs text-white/70 mt-1">Curso actual: ${curso.label || curso.id} · ${formatDateES(new Date(curso.start))} → ${formatDateES(new Date(curso.end))}</p>
+            <p class="text-xs text-white/70 mt-1">Curso actual: ${escapeHtml(curso.label || curso.id)} · ${formatDateES(new Date(curso.start))} → ${formatDateES(new Date(curso.end))}</p>
           </div>
         </div>
       </div>
@@ -5454,7 +5475,9 @@ window._showInformeModal = () => {
     if (!e.semana) return false;
     // Mapear la semana con el calendario del curso de la evidencia (los informes
     // anuales pueden abarcar cursos escolares distintos al activo).
-    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || curso;
+    // Si el doc del curso de la evidencia fue borrado, derivar su planStart del
+    // propio id (computePlanStartForYear) en vez de usar el calendario del curso activo.
+    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || (e.cursoId ? { id: e.cursoId } : curso);
     const { start } = getWeekDates(e.semana, cursoEv);
     return inRange(dateToISO(start));
   });
@@ -5617,7 +5640,7 @@ window._renderFechasContainer = () => {
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Curso escolar *</label>
         <select id="rpt-curso" class="w-full h-11 px-3 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none bg-white">
-          ${(state.cursos).map(c => `<option value="${c.id}" ${c.id === curso.id ? "selected" : ""}>${c.label || c.id} · ${formatDateES(new Date(c.start))} → ${formatDateES(new Date(c.end))}</option>`).join("")}
+          ${(state.cursos).map(c => `<option value="${c.id}" ${c.id === curso.id ? "selected" : ""}>${escapeHtml(c.label || c.id)} · ${formatDateES(new Date(c.start))} → ${formatDateES(new Date(c.end))}</option>`).join("")}
         </select>
       </div>
       <div class="flex items-end">
@@ -5635,7 +5658,7 @@ window._generateInforme = () => {
   // Recoger fechas según periodo
   let fechaInicio, fechaFin, periodLabel;
   if (period === "diario") {
-    const f = document.getElementById("rpt-fecha").value;
+    const f = document.getElementById("rpt-fecha")?.value;
     if (!f) { alert("Selecciona un día."); return; }
     fechaInicio = f; fechaFin = f;
     periodLabel = `Día ${formatDateES(new Date(f))}`;
@@ -5645,13 +5668,15 @@ window._generateInforme = () => {
     fechaInicio = dateToISO(start); fechaFin = dateToISO(end);
     periodLabel = `Semana ${wnum} (${formatDateES(start)} → ${formatDateES(end)})`;
   } else if (period === "mensual") {
-    const v = document.getElementById("rpt-mes").value;
+    const v = document.getElementById("rpt-mes")?.value || "";
     const [s, e] = v.split("|");
+    if (!s || !e) { alert("Selecciona un mes."); return; }
     fechaInicio = s; fechaFin = e;
     const d = new Date(s);
     periodLabel = d.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
   } else if (period === "anual") {
-    const cursoId = document.getElementById("rpt-curso").value;
+    const cursoId = document.getElementById("rpt-curso")?.value;
+    if (!cursoId) { alert("Selecciona un curso."); return; }
     const c = (state.cursos).find(x => x.id === cursoId) || curso;
     fechaInicio = c.start; fechaFin = c.end;
     periodLabel = `Curso ${c.label || c.id}`;
@@ -5665,7 +5690,9 @@ window._generateInforme = () => {
     if (!e.semana) return false;
     // Mapear la semana con el calendario del curso de la evidencia (los informes
     // anuales pueden abarcar cursos escolares distintos al activo).
-    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || curso;
+    // Si el doc del curso de la evidencia fue borrado, derivar su planStart del
+    // propio id (computePlanStartForYear) en vez de usar el calendario del curso activo.
+    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || (e.cursoId ? { id: e.cursoId } : curso);
     const { start } = getWeekDates(e.semana, cursoEv);
     return inRange(dateToISO(start));
   });
@@ -5752,7 +5779,9 @@ window._generateInforme = () => {
 
     if (evsRM.length > 0) {
       const rows = evsRM.map(e => {
-        const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || curso;
+        // Si el doc del curso de la evidencia fue borrado, derivar su planStart del
+    // propio id (computePlanStartForYear) en vez de usar el calendario del curso activo.
+    const cursoEv = (e.cursoId && state.cursos.find(c => c.id === e.cursoId)) || (e.cursoId ? { id: e.cursoId } : curso);
         const { start } = getWeekDates(e.semana, cursoEv);
         return [
           `S${e.semana}`,
@@ -6490,8 +6519,12 @@ function _invertirEmpleado(raw) {
 // Acepta "dd/mm/yyyy" (texto) o número de serie de Excel.
 function _parseFechaDMY(s) {
   if (typeof s === "number" && isFinite(s)) {
+    // El serial de Excel es medianoche UTC del día. Leer los componentes en UTC
+    // y construir la Date local: con getDate() en zonas UTC− devolvería el día
+    // anterior (y las fechas de cese se evaluarían desplazadas).
     const d = new Date(Math.round((s - 25569) * 86400000));
-    return isNaN(d) ? null : d;
+    if (isNaN(d)) return null;
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   }
   const m = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/.exec(String(s || "").trim());
   if (!m) return null;
@@ -7014,6 +7047,9 @@ document.addEventListener("input", (e) => {
 
 // Crear usuario desde el formulario en línea de la sección Usuarios
 window._saveNewUsuario = async () => {
+  // Guard de doble submit: el botón solo se desactivaba tras la comprobación de
+  // disponibilidad (getDoc); en ese hueco dos clics creaban la cuenta dos veces.
+  if (document.getElementById("nu-save")?.disabled) return;
   const nombre = document.getElementById("nuNombre")?.value.trim() || "";
   const username = normalizeUsername(document.getElementById("nuUser")?.value);
   const departamento = document.getElementById("nuDepto")?.value || "";
@@ -7557,7 +7593,7 @@ function viewCursosEscolares() {
         <div class="flex flex-wrap items-center gap-3">
           <div class="flex-1 min-w-[200px]">
             <select id="select-curso-activo" class="w-full h-11 px-3 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none bg-white text-sm font-medium">
-              ${sortedCursos.map(c => `<option value="${c.id}" ${c.id === activeCurso.id ? "selected" : ""}>${c.label || c.id} · ${formatDateES(new Date(c.start))} → ${formatDateES(new Date(c.end))}</option>`).join("")}
+              ${sortedCursos.map(c => `<option value="${c.id}" ${c.id === activeCurso.id ? "selected" : ""}>${escapeHtml(c.label || c.id)} · ${formatDateES(new Date(c.start))} → ${formatDateES(new Date(c.end))}</option>`).join("")}
             </select>
           </div>
           <button data-action="set-curso-activo" data-curso="auto" class="px-3 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium ${!isForced ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : ''}">
@@ -7569,9 +7605,9 @@ function viewCursosEscolares() {
         </div>
         <div class="mt-3 flex items-center gap-2 text-xs">
           ${isForced
-            ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold"><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> Curso forzado: <strong class="ml-1">${activeCurso.label || activeCurso.id}</strong></span>
+            ? `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-800 font-semibold"><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg> Curso forzado: <strong class="ml-1">${escapeHtml(activeCurso.label || activeCurso.id)}</strong></span>
                <span class="text-slate-500">La app usará este curso aunque la fecha corresponda a otro distinto.</span>`
-            : `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold"><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Auto-detectado: <strong class="ml-1">${activeCurso.label || activeCurso.id}</strong></span>
+            : `<span class="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold"><svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Auto-detectado: <strong class="ml-1">${escapeHtml(activeCurso.label || activeCurso.id)}</strong></span>
                <span class="text-slate-500">Hoy (${formatDateES(new Date())}) pertenece al curso ${currentLabel}. La app usa este curso automáticamente.</span>`
           }
         </div>
@@ -7597,7 +7633,7 @@ function viewCursosEscolares() {
                 <div class="flex items-center justify-between gap-3 mb-2">
                   <div class="min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
-                      <span class="font-bold text-slate-800 text-base">${c.label || c.id}</span>
+                      <span class="font-bold text-slate-800 text-base">${escapeHtml(c.label || c.id)}</span>
                       ${isCurrent ? '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Vigente (auto)</span>' : ''}
                       ${isActive && !isCurrent ? '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">Forzado</span>' : ''}
                     </div>
@@ -7883,9 +7919,24 @@ window._createCurso = async () => {
 };
 
 window._deleteCurso = async (id) => {
-  if (!confirm(`¿Seguro que deseas eliminar el curso ${id}? Esta acción no se puede deshacer.`)) return;
+  const nEvs = _todasEvidenciasLector.filter(e => e.cursoId === id).length
+    + _todasEvidenciasRM.filter(e => e.cursoId === id).length;
+  const avisoEvs = nEvs > 0
+    ? `
+
+Este curso tiene ${nEvs} evidencia(s) registrada(s): quedarán huérfanas (invisibles en la app, no se borran).`
+    : "";
+  if (!confirm(`¿Seguro que deseas eliminar el curso ${id}? Esta acción no se puede deshacer.${avisoEvs}`)) return;
   try {
     await deleteCurso(id);
+    // Limpieza asociada: la asignación de profesorado del curso (si se recreara
+    // con el mismo id reaparecería la lista anterior) y el curso forzado si lo
+    // apuntaba (getCurrentCurso ya no lo encontraría).
+    try { await deleteDoc(doc(db, "curso_profesores", id)); } catch (e) { console.warn("[deleteCurso] curso_profesores:", e?.code || e?.message); }
+    if (state.forcedCursoId === id) {
+      state.forcedCursoId = null;
+      try { localStorage.removeItem("forcedCursoId"); } catch (e) {}
+    }
     renderMain();
   } catch (e) {
     console.error(e);
@@ -8060,8 +8111,13 @@ window._calSyncFromDOM = () => {
     ev.name = document.getElementById(`cal-ev-name-${i}`)?.value ?? ev.name;
     ev.start = document.getElementById(`cal-ev-start-${i}`)?.value ?? ev.start;
     ev.end = document.getElementById(`cal-ev-end-${i}`)?.value ?? ev.end;
-    const w = parseInt(document.getElementById(`cal-ev-weeks-${i}`)?.value, 10);
-    if (Number.isFinite(w) && w >= 1) ev.weeks = w;
+    const wEl = document.getElementById(`cal-ev-weeks-${i}`);
+    const w = parseInt(wEl?.value, 10);
+    // Si el input existe pero está vacío o es inválido, marcar NaN (la validación
+    // lo detecta): conservar el valor anterior haría que se guardaran semanas
+    // viejas que ya no se corresponden con lo que ve el usuario en pantalla.
+    if (wEl) ev.weeks = (Number.isFinite(w) && w >= 1) ? w : NaN;
+    else if (Number.isFinite(w) && w >= 1) ev.weeks = w;
   });
 };
 
