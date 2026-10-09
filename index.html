@@ -66,6 +66,8 @@
   .cell-has-evidence:hover { background-color: #d1fae5; }
   .cell-no-evidence { background-color: #ffffff; border-color: #e2e8f0; }
   .cell-no-evidence:hover { border-color: #60a5fa; background-color: #eff6ff; }
+  /* Celdas de día no lectivo (v2.37): rayado suave, sin hover ni registro */
+  .cell-no-lectivo { background-color: #f1f5f9; border-color: #cbd5e1; background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(148,163,184,0.18) 5px, rgba(148,163,184,0.18) 10px); cursor: default; }
   /* Chip «Esta semana se lee a nª hora»: parpadeo a 1 Hz (ciclo de 1 s) */
   @keyframes chip-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
   .chip-semana-blink { animation: chip-blink 1s ease-in-out infinite; }
@@ -202,6 +204,19 @@ document.addEventListener("click", (e) => {
         break;
       case "delete-curso":
         window._deleteCurso && window._deleteCurso(btn.dataset.cursoId);
+        break;
+      // --- Días no lectivos del curso activo (importación JSON, v2.37) ---
+      case "import-dias-no-lectivos":
+        window._openImportDiasNoLectivosDialog && window._openImportDiasNoLectivosDialog();
+        break;
+      case "close-dnl-dialog":
+        window._closeImportDiasNoLectivosDialog && window._closeImportDiasNoLectivosDialog();
+        break;
+      case "confirm-import-dnl":
+        window._confirmImportDiasNoLectivos && window._confirmImportDiasNoLectivos();
+        break;
+      case "clear-dias-no-lectivos":
+        window._clearDiasNoLectivos && window._clearDiasNoLectivos();
         break;
       // --- Calendario del curso (trimestres) ---
       case "edit-calendario":
@@ -422,7 +437,7 @@ const INSTITUTO = {
 // Versión visible de la aplicación. Aparece en el pie del login y en el panel de
 // gestión de usuarios para poder comprobar de un vistazo si el dispositivo está
 // ejecutando la versión nueva o una copia antigua cacheada por la PWA.
-const APP_VERSION = "2.36";
+const APP_VERSION = "2.37";
 
 // Versión de la aplicación para el chip de Inicio: se pregunta al service worker
 // activo (su CACHE_NAME, p. ej. "nmaspi-v2.34" → "2.34") con un mensaje; si no
@@ -1094,6 +1109,111 @@ function getDaysOfWeek(weekStart) {
 const DIA_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"];
 
 // -----------------------------------------------------------------------------
+// 3b. DÍAS NO LECTIVOS DEL CURSO ESCOLAR ACTIVO (v2.37)
+// -----------------------------------------------------------------------------
+// El calendario de días no lectivos (festivos, períodos vacacionales, días de
+// libre disposición…) se importa en la pantalla «Cursos escolares», dentro de la
+// sección «Curso activo», desde un .json exportado por la aplicación «Gestión de
+// Asuntos Propios». Se guarda en el documento del curso (campo «diasNoLectivos»),
+// de modo que afecta EXCLUSIVAMENTE a ese curso: los demás cursos no se ven
+// afectados. Los sábados y domingos son siempre no lectivos y no se importan.
+// Efecto: en los días no lectivos el profesorado no puede AÑADIR evidencias al
+// cronograma del Plan Lector (día a día) ni al de Razonamiento Matemático (sus
+// sesiones no tienen día fijo, así que una semana solo queda bloqueada cuando
+// TODOS sus días lectivos (lunes a viernes) son no lectivos). Las evidencias ya
+// registradas se conservan: se pueden consultar y editar.
+const NOMBRES_DIA_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
+function esFinDeSemanaISO(iso) {
+  const d = normalizeDate(iso);
+  if (isNaN(d.getTime())) return false;
+  const dow = d.getDay(); // 0 = domingo, 6 = sábado
+  return dow === 0 || dow === 6;
+}
+
+// Lista normalizada, deduplicada y ordenada de los días no lectivos de un curso:
+// [{ fecha: "YYYY-MM-DD", categorias: ["Festivo"], detalle: "Navidad" }]
+function getDiasNoLectivosCurso(curso) {
+  try {
+    const raw = Array.isArray(curso?.diasNoLectivos) ? curso.diasNoLectivos : [];
+    const out = [];
+    const seen = new Set();
+    for (const d of raw) {
+      if (!d || typeof d.fecha !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d.fecha)) continue;
+      if (seen.has(d.fecha)) continue;
+      seen.add(d.fecha);
+      const cats = Array.isArray(d.categorias) ? d.categorias.map(c => String(c).trim()).filter(Boolean) : [];
+      out.push({
+        fecha: d.fecha,
+        categorias: cats,
+        detalle: typeof d.detalle === "string" ? d.detalle.trim() : "",
+      });
+    }
+    out.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+
+// Motivo legible de un día no lectivo: el detalle («Navidad») y, si no lo hay,
+// las categorías («Festivo», «Laborable No Lectivo»…).
+function motivoDiaNoLectivo(d) {
+  if (d.detalle) return d.detalle;
+  if (d.categorias && d.categorias.length) return d.categorias.join(" · ");
+  return "día no lectivo";
+}
+
+// Info del día no lectivo para una fecha ISO del curso ACTIVO, o null si es
+// lectivo. Los sábados y domingos se consideran no lectivos siempre.
+function infoDiaNoLectivo(iso) {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  if (esFinDeSemanaISO(iso)) {
+    return { fecha: iso, categorias: [], detalle: "", motivo: "fin de semana" };
+  }
+  const d = getDiasNoLectivosCurso(getCurrentCurso()).find(x => x.fecha === iso);
+  if (!d) return null;
+  return { ...d, motivo: motivoDiaNoLectivo(d) };
+}
+
+function esDiaNoLectivo(iso) {
+  return infoDiaNoLectivo(iso) != null;
+}
+
+// Info no lectiva de la semana n (lunes a viernes) del curso activo:
+// { total, noLectivos, completa, motivos }. `completa` es true cuando TODOS los
+// días de la semana son no lectivos (semana de vacaciones completa).
+function getInfoNoLectivaSemana(weekNumber) {
+  const out = { total: 0, noLectivos: 0, completa: false, motivos: [] };
+  const wn = parseInt(weekNumber, 10);
+  if (!Number.isFinite(wn) || wn < 1) return out;
+  const { start } = getWeekDates(wn);
+  const isos = getDaysOfWeek(start).map(d => dateToISO(d));
+  out.total = isos.length;
+  isos.forEach(iso => {
+    const info = infoDiaNoLectivo(iso);
+    if (info) {
+      out.noLectivos++;
+      if (info.motivo && info.motivo !== "fin de semana" && !out.motivos.includes(info.motivo)) {
+        out.motivos.push(info.motivo);
+      }
+    }
+  });
+  out.completa = out.total > 0 && out.noLectivos === out.total;
+  return out;
+}
+
+// Resumen agrupado de días no lectivos: [[motivo, nº días], ...]
+function resumenGruposDiasNoLectivos(dias) {
+  const map = new Map();
+  (dias || []).forEach(d => {
+    const key = motivoDiaNoLectivo(d);
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return Array.from(map.entries());
+}
+
+// -----------------------------------------------------------------------------
 // 4. ESTADO GLOBAL DE LA APP
 // -----------------------------------------------------------------------------
 const state = {
@@ -1119,6 +1239,7 @@ const state = {
   showReports: false,
   showHelp: {},
   informeConfig: { period: "semanal" },
+  openCursoAcc: null, // curso cuyo acordeón de «Cursos disponibles» está desplegado (v2.37)
 };
 
 // Referencias a las suscripciones activas (para poder cancelarlas y re-crearlas)
@@ -2384,7 +2505,15 @@ function restoreGestionUsuariosUI(snap) {
 // fase de captura sobre document. Los acordeones se muestran replegados de inicio.
 document.addEventListener("toggle", (e) => {
   const d = e.target;
-  if (!(d instanceof HTMLDetailsElement) || !d.open) return;
+  if (!(d instanceof HTMLDetailsElement)) return;
+  // Acordeones de «Cursos disponibles» (v2.37): recordar el curso desplegado para
+  // conservarlo al re-renderizar la vista (importaciones, cambios de profesorado…).
+  const cid = d.getAttribute("data-curso-acc");
+  if (cid) {
+    if (d.open) state.openCursoAcc = cid;
+    else if (state.openCursoAcc === cid) state.openCursoAcc = null;
+  }
+  if (!d.open) return;
   const grupo = d.getAttribute("data-acc-grupo");
   if (!grupo) return;
   document.querySelectorAll(`details[data-acc-grupo="${grupo}"]`).forEach((otro) => {
@@ -2735,6 +2864,13 @@ function getEvaluacionesDisplay(curso) {
 
 // Utilidades de calendario expuestas (consola y pruebas)
 window._fechaUtils = { computeWeeksFromRange, totalWeeksOfEvals, evaluacionesWeeksText, generateEvaluacionesForCurso, getEvaluacionesDisplay, getCurrentCurso, getEvaluacionesForCurso, computePlanStartForYear, computeSchoolYearLabel };
+
+// Utilidades de días no lectivos expuestas (consola y pruebas), igual que _fechaUtils
+window._diasNoLectivosUtils = {
+  esFinDeSemanaISO, esDiaNoLectivo, infoDiaNoLectivo, getDiasNoLectivosCurso,
+  getInfoNoLectivaSemana, motivoDiaNoLectivo, resumenGruposDiasNoLectivos,
+  parseDiasNoLectivosFile,
+};
 
 // -----------------------------------------------------------------------------
 // 6. RENDER PRINCIPAL
@@ -3430,10 +3566,13 @@ function viewHome() {
           <span class="text-3xl sm:text-4xl font-bold">ñ<span class="text-emerald-200 text-2xl">+</span>π</span>
         </div>
         <h1 class="text-2xl sm:text-4xl font-bold leading-tight">Planes Lector y de Razonamiento Matemático</h1>
-        <p class="mt-2 text-sm sm:text-base text-white/90">${INSTITUTO.nombre} · ${INSTITUTO.localidad}</p>
-        <p class="mt-1 text-xs sm:text-sm text-white/80">Curso ${escapeHtml(INSTITUTO.curso)}
-          <span id="chip-app-version" title="Versión de la aplicación" class="ml-1.5 inline-flex items-center rounded-full bg-white/15 border border-white/25 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-white/90 align-middle">v${APP_VERSION}</span>
-        </p>
+        <div class="mt-3 flex items-center justify-center gap-2 sm:gap-3">
+          <div class="text-center min-w-0">
+            <p class="text-sm sm:text-base text-white/90 leading-snug">${INSTITUTO.nombre} · ${INSTITUTO.localidad}</p>
+            <p class="text-xs sm:text-sm text-white/80 mt-0.5 leading-snug">Curso ${escapeHtml(INSTITUTO.curso)}</p>
+          </div>
+          <span id="chip-app-version" title="Versión de la aplicación" class="shrink-0 inline-flex items-center rounded-full bg-white/15 border border-white/25 px-2 py-0.5 text-[10px] sm:text-xs font-semibold text-white/90 align-middle">v${APP_VERSION}</span>
+        </div>
         <a href="${isAdmin() ? MANUALES_USUARIO.admin : MANUALES_USUARIO.profesorado}" target="_blank" rel="noopener" title="Manual de usuario en PDF (se abre en una ventana nueva)" class="absolute bottom-2.5 right-2.5 sm:bottom-4 sm:right-4 inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/30 border border-white/25 px-2.5 py-1.5 sm:px-3 sm:py-2 text-xs font-semibold text-white transition">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
           <span class="hidden sm:inline">Manual de usuario</span><span class="sm:hidden">Manual</span>
@@ -3623,6 +3762,7 @@ function viewCronogramaLector() {
               <li>Pulsa la <strong>celda del día</strong> y elige tus <strong>grupos</strong> en el menú: puedes marcar <strong>uno o varios</strong> (p. ej. 3ºA + 3ºDiver, o los cuatro de 4º) y la actividad se registrará en <strong>todos los seleccionados</strong>. Los grupos marcados en verde ya tienen evidencia ese día y no se pueden volver a registrar.</li>
               <li>Rellena el formulario: nombre (ya relleno con el de tu cuenta), <strong>tipología textual</strong> y <strong>tipo de texto</strong>; observaciones opcional. Guarda con «Registrar».</li>
               <li>La celda queda <span class="text-emerald-600 font-semibold">verde</span>: <strong>✓ grupo</strong> = tuya (puedes editarla o eliminarla); <strong>🔒 grupo</strong> = de otro (solo lectura). Solo el autor o un administrador puede modificarla.</li>
+              <li>Los <strong>días no lectivos</strong> del curso escolar activo (festivos y períodos vacacionales importados por la administración en «Cursos escolares») se muestran rayados y <strong>no admiten nuevas evidencias</strong>; las ya registradas se pueden consultar y editar.</li>
               <li>Todo se guarda al momento en Firebase, asociado a tu cuenta y al curso escolar activo.</li>
             </ul>
           </div>
@@ -3633,6 +3773,7 @@ function viewCronogramaLector() {
         <span class="font-semibold">Leyenda:</span>
         <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded cell-has-evidence" style="border:1px solid #34d399"></span>Con evidencia registrada</span>
         <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded cell-no-evidence" style="border:1px solid #e2e8f0"></span>Sin registrar</span>
+        <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded cell-no-lectivo" style="border:1px solid #cbd5e1"></span>Día no lectivo (no se registran evidencias)</span>
         <span class="inline-flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-100 border border-blue-300"></span>Hora de lectura</span>
       </div>
 
@@ -3661,13 +3802,9 @@ function renderWeekLector(w) {
   const daysHtml = w.days.map(d => {
     const dayEvs = state.evidenciasLector.filter(e => e.fecha === d.isoDate);
     const has = dayEvs.length > 0;
-    return `
-      <button data-action="open-group-menu" data-fecha="${d.isoDate}" data-hora="${w.hour}" data-semana="${w.num}" data-dia="${d.name}"
-        class="relative p-1.5 rounded border text-left transition min-h-[60px] sm:min-h-[80px] ${has ? 'cell-has-evidence' : 'cell-no-evidence'}">
-        <div class="flex flex-col h-full">
-          <span class="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">${d.name.slice(0, 3)}</span>
-          <span class="text-[10px] sm:text-xs text-slate-500">${d.date.getDate()}/${d.date.getMonth() + 1}</span>
-          ${has ? `
+    // Fichas de evidencias ya registradas: se conservan también en los días no
+    // lectivos (se pueden consultar y editar; lo que no se puede es AÑADIR nuevas).
+    const evidenciasHtml = has ? `
             <div class="mt-auto space-y-0.5">
               ${dayEvs.map(ev => {
                 const canEdit = canEditEvidencia(ev);
@@ -3681,8 +3818,27 @@ function renderWeekLector(w) {
                   <span class="font-semibold">${canEdit ? '✓' : '🔒'} ${escapeHtml(ev.grupo)}</span>${actividadRealizada ? `<span class="block text-[8px] sm:text-[9px] text-slate-600 truncate mt-0.5">${escapeHtml(actividadRealizada)}</span>` : ''}
                 </span>`;
               }).join("")}
-            </div>
-          ` : `<span class="mt-auto text-[9px] sm:text-[10px] text-slate-400 inline-flex items-center gap-0.5">+ Añadir</span>`}
+            </div>` : "";
+    // Día no lectivo del curso activo (v2.37): celda desactivada, sin registro.
+    const noLect = infoDiaNoLectivo(d.isoDate);
+    if (noLect) {
+      return `
+      <div class="relative p-1.5 rounded border text-left min-h-[60px] sm:min-h-[80px] cell-no-lectivo"
+        title="Día no lectivo${noLect.motivo ? " · " + escapeHtml(noLect.motivo) : ""} — no se pueden registrar evidencias">
+        <div class="flex flex-col h-full">
+          <span class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">${d.name.slice(0, 3)}</span>
+          <span class="text-[10px] sm:text-xs text-slate-400">${d.date.getDate()}/${d.date.getMonth() + 1}</span>
+          ${has ? evidenciasHtml : `<span class="mt-auto text-[9px] sm:text-[10px] text-slate-500 inline-flex items-center gap-0.5">⊘ <span class="truncate">${escapeHtml(noLect.motivo || "No lectivo")}</span></span>`}
+        </div>
+      </div>`;
+    }
+    return `
+      <button data-action="open-group-menu" data-fecha="${d.isoDate}" data-hora="${w.hour}" data-semana="${w.num}" data-dia="${d.name}"
+        class="relative p-1.5 rounded border text-left transition min-h-[60px] sm:min-h-[80px] ${has ? 'cell-has-evidence' : 'cell-no-evidence'}">
+        <div class="flex flex-col h-full">
+          <span class="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">${d.name.slice(0, 3)}</span>
+          <span class="text-[10px] sm:text-xs text-slate-500">${d.date.getDate()}/${d.date.getMonth() + 1}</span>
+          ${has ? evidenciasHtml : `<span class="mt-auto text-[9px] sm:text-[10px] text-slate-400 inline-flex items-center gap-0.5">+ Añadir</span>`}
         </div>
       </button>`;
   }).join("");
@@ -3716,6 +3872,13 @@ let pendingLectorSel = new Set();        // grupos marcados en el menú multisel
 let pendingLectorRegistered = new Set(); // grupos que ya tienen evidencia ese día
 
 window._openGroupMenu = (fecha, hora, semana, dia) => {
+  // Días no lectivos (v2.37): en un día no lectivo no se pueden añadir evidencias
+  // de lectura al cronograma.
+  const infoNL = infoDiaNoLectivo(fecha);
+  if (infoNL) {
+    alert(`${dia} ${formatDateES(normalizeDate(fecha))} es un día no lectivo${infoNL.motivo ? " (" + infoNL.motivo + ")" : ""}.\n\nNo se pueden registrar evidencias de lectura en los días no lectivos del curso escolar.`);
+    return;
+  }
   pendingLectorCell = { fecha, hora, semana, dia };
   pendingLectorSel = new Set();
   pendingLectorRegistered = new Set();
@@ -3842,6 +4005,15 @@ window._editEvidenciaLector = (id) => {
 };
 
 function openEvidenciaLectorDialog(data) {
+  // Días no lectivos (v2.37): no se pueden CREAR evidencias en días no lectivos
+  // (las ya registradas se pueden consultar y editar).
+  if (data.mode === "create") {
+    const infoNL = infoDiaNoLectivo(data.fecha);
+    if (infoNL) {
+      alert(`${data.dia} ${formatDateES(normalizeDate(data.fecha))} es un día no lectivo${infoNL.motivo ? " (" + infoNL.motivo + ")" : ""}.\n\nNo se pueden registrar evidencias de lectura en los días no lectivos del curso escolar.`);
+      return;
+    }
+  }
   const overlay = document.createElement("div");
   document.getElementById("ev-lector-dialog")?.remove();
   overlay.id = "ev-lector-dialog";
@@ -3931,6 +4103,12 @@ window._saveEvLector = async () => {
   if (!profesor) { err.textContent = "Indica tu nombre."; err.classList.remove("hidden"); return; }
   if (!tipologia) { err.textContent = "Selecciona la tipología textual."; err.classList.remove("hidden"); return; }
   if (!tipoTexto) { err.textContent = "Selecciona el tipo de texto."; err.classList.remove("hidden"); return; }
+  // Días no lectivos (v2.37): red de seguridad si el calendario cambió con el
+  // diálogo abierto (importación de días no lectivos en otra pestaña).
+  if (data.mode === "create" && infoDiaNoLectivo(data.fecha)) {
+    err.textContent = "No se puede registrar: la fecha corresponde a un día no lectivo del curso.";
+    err.classList.remove("hidden"); return;
+  }
 
   const btn = document.getElementById("ev-lector-save");
   btn.disabled = true;
@@ -4317,6 +4495,7 @@ function viewRMHome() {
               <li>Con los filtros de la parte superior puedes mostrar <strong>una única asignatura</strong>, todas las de un <strong>ámbito</strong> (CT, SL, AR) o volver a «↺ Mostrar todo».</li>
               <li>Para <strong>registrar la evidencia</strong>: pulsa el botón <strong>+ Grupo</strong> o <strong>👥 Varios grupos</strong> que hay bajo la actividad. En el formulario puedes marcar <strong>uno o varios grupos</strong> (p. ej. 3ºA + 3ºDiver, o los cuatro de 4º): la actividad se inscribirá en <strong>todos los grupos seleccionados</strong>, aunque pertenezcan a cursos distintos. Trae tu nombre ya relleno: describe la <strong>actividad realizada</strong> (puedes partir de la sugerencia y ajustarla) y añade <strong>observaciones</strong> si quieres. Guarda con «Registrar».</li>
               <li>Cuando una sesión tiene registro, su grupo aparece como ficha verde: <strong>✓</strong> es tuya (puedes editarla o eliminarla); <strong>🔒</strong> es de otro compañero/a (solo lectura). Solo el autor o un administrador puede modificarla.</li>
+              <li>Las <strong>semanas no lectivas</strong> del curso (vacaciones completas: Navidad, Semana Santa…) quedan marcadas en rojo y <strong>no admiten nuevas evidencias</strong>; las semanas con algún día no lectivo suelto se avisan en ámbar pero sí permiten registrar.</li>
               <li>El botón <strong>Informes</strong> muestra un resumen del curso y, cuando hay evidencias, el <strong>gráfico de distribución</strong> por asignatura.</li>
               <li>Todo se guarda en <strong>Firebase</strong> al momento, asociado a tu cuenta y al <strong>curso escolar activo</strong>.</li>
             </ul>
@@ -4535,6 +4714,12 @@ function viewCursoRM(cursoId) {
 }
 
 function renderWeekRM(sem, curso, isVisible, getEv) {
+  // Días no lectivos de la semana (v2.37): las sesiones de RM no están asociadas
+  // a un día concreto de la semana, así que una semana queda bloqueada solo cuando
+  // TODOS sus días lectivos (lunes a viernes) son no lectivos (p. ej. vacaciones
+  // de Navidad o de Semana Santa). Si la semana tiene algún día lectivo, admite
+  // registro; si además tiene días no lectivos sueltos, se avisa en la cabecera.
+  const infoNL = getInfoNoLectivaSemana(sem.num);
   const sesionesHtml = sem.sesiones.map(s => {
     if (!isVisible(s)) {
       return `<div class="rounded border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400">Sesión ${s.sesion} · Oculta por filtro</div>`;
@@ -4546,6 +4731,17 @@ function renderWeekRM(sem, curso, isVisible, getEv) {
       return ev ? { grupo: g, ev } : null;
     }).filter(Boolean);
     const tieneActividadesRealizadas = gruposConEv.length > 0;
+    // Semana completamente no lectiva: no se ofrecen botones de registro (v2.37)
+    const botonRegistro = infoNL.completa
+      ? `<span class="text-[10px] sm:text-xs px-2 py-1 rounded-md bg-rose-50 border border-rose-200 text-rose-600 inline-flex items-center gap-1" title="Semana no lectiva del curso: no se pueden añadir evidencias">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+          Semana no lectiva — sin registro
+        </span>`
+      : `<button data-action="open-ev-rm" data-mode="create" data-grupo="" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${escapeHtml(s.materia)}" data-actividad="${escapeHtml(s.actividad)}" data-codigo="${escapeHtml(s.codigo)}"
+            class="text-[10px] sm:text-xs px-2 py-1 rounded-md bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 transition inline-flex items-center gap-1"
+            title="Registrar la actividad en varios grupos a la vez (selección múltiple)">
+            👥 Varios grupos
+          </button>`;
     return `
       <div class="rounded-lg border border-slate-200 p-3 bg-white" style="border-left: 4px solid ${color}">
         <div class="flex items-start justify-between mb-1">
@@ -4562,11 +4758,7 @@ function renderWeekRM(sem, curso, isVisible, getEv) {
         }
         <p class="text-[10px] text-slate-500 mt-1"><span class="font-mono bg-slate-100 px-1 py-0.5 rounded">${s.codigo}</span></p>
         <div class="mt-2 flex flex-wrap gap-1.5">
-          <button data-action="open-ev-rm" data-mode="create" data-grupo="" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${escapeHtml(s.materia)}" data-actividad="${escapeHtml(s.actividad)}" data-codigo="${escapeHtml(s.codigo)}"
-            class="text-[10px] sm:text-xs px-2 py-1 rounded-md bg-purple-50 border border-purple-300 text-purple-700 hover:bg-purple-100 transition inline-flex items-center gap-1"
-            title="Registrar la actividad en varios grupos a la vez (selección múltiple)">
-            👥 Varios grupos
-          </button>
+          ${botonRegistro}
           ${curso.grupos.map(g => {
             const ev = getEv(g, sem.num, s.sesion);
             if (ev) {
@@ -4577,6 +4769,7 @@ function renderWeekRM(sem, curso, isVisible, getEv) {
                 ${canEdit ? '✓' : '🔒'} ${g}
               </button>`;
             }
+            if (infoNL.completa) return ""; // semana no lectiva: sin botones de alta
             return `<button data-action="open-ev-rm" data-mode="create" data-grupo="${g}" data-semana="${sem.num}" data-sesion="${s.sesion}" data-materia="${escapeHtml(s.materia)}" data-actividad="${escapeHtml(s.actividad)}" data-codigo="${escapeHtml(s.codigo)}"
               class="text-[10px] sm:text-xs px-2 py-1 rounded-md bg-slate-50 border border-slate-300 text-slate-600 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-700 transition inline-flex items-center gap-1">
               + ${g}
@@ -4586,11 +4779,20 @@ function renderWeekRM(sem, curso, isVisible, getEv) {
       </div>`;
   }).join("");
 
+  const chipSemanaNL = infoNL.completa
+    ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold" title="${escapeHtml(infoNL.motivos.join(" · "))}">Semana no lectiva${infoNL.motivos.length ? " · " + escapeHtml(infoNL.motivos[0]) : ""}</span>`
+    : (infoNL.noLectivos > 0
+      ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold" title="Días no lectivos: ${escapeHtml(infoNL.motivos.join(" · "))}">${infoNL.noLectivos} día(s) no lectivo(s)</span>`
+      : "");
+
   return `
     <div class="rounded-lg border border-slate-200 overflow-hidden bg-white">
-      <div class="flex items-center justify-between px-3 py-1.5 bg-slate-50 border-b border-slate-200">
-        <span class="text-xs font-bold text-slate-700">Semana ${sem.num}</span>
-        <span class="text-xs text-slate-500">${formatDateES(sem.start)} → ${formatDateES(sem.end)}</span>
+      <div class="flex items-center justify-between px-3 py-1.5 bg-slate-50 border-b border-slate-200 gap-2">
+        <div class="flex items-center gap-2 min-w-0 flex-wrap">
+          <span class="text-xs font-bold text-slate-700">Semana ${sem.num}</span>
+          ${chipSemanaNL}
+        </div>
+        <span class="text-xs text-slate-500 shrink-0">${formatDateES(sem.start)} → ${formatDateES(sem.end)}</span>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-2 p-2">${sesionesHtml}</div>
     </div>`;
@@ -4835,6 +5037,16 @@ window._editEvidenciaRM = (id, sesion, materia, actividad, codigo) => {
 };
 
 function openEvidenciaRMDialog(data) {
+  // Días no lectivos (v2.37): en semanas completamente no lectivas (vacaciones)
+  // no se pueden registrar evidencias nuevas de razonamiento matemático. Las
+  // existentes se pueden consultar y editar.
+  if (data.mode === "create") {
+    const infoNL = getInfoNoLectivaSemana(parseInt(data.semana, 10));
+    if (infoNL.completa) {
+      alert(`La semana ${data.semana} del curso escolar es no lectiva${infoNL.motivos.length ? " (" + infoNL.motivos.join(", ") + ")" : ""}.\n\nNo se pueden registrar evidencias de razonamiento matemático en las semanas no lectivas del curso.`);
+      return;
+    }
+  }
   const overlay = document.createElement("div");
   document.getElementById("ev-rm-dialog")?.remove();
   overlay.id = "ev-rm-dialog";
@@ -4982,6 +5194,15 @@ window._saveEvRM = async () => {
   err.classList.add("hidden");
   if (!profesor) { err.textContent = "Indica tu nombre."; err.classList.remove("hidden"); return; }
   if (!actividadRealizada) { err.textContent = "Indica la actividad realizada."; err.classList.remove("hidden"); return; }
+  // Días no lectivos (v2.37): red de seguridad si el calendario cambió con el
+  // diálogo abierto (importación de días no lectivos en otra pestaña).
+  if (data.mode === "create") {
+    const infoNL = getInfoNoLectivaSemana(parseInt(data.semana, 10));
+    if (infoNL.completa) {
+      err.textContent = "No se puede registrar: la semana corresponde a un período no lectivo del curso.";
+      err.classList.remove("hidden"); return;
+    }
+  }
 
   const btn = document.getElementById("ev-rm-save");
   btn.disabled = true;
@@ -7567,12 +7788,34 @@ window._confirmBulkDelete = async () => {
 // -----------------------------------------------------------------------------
 // 23. VIEW: CURSOS ESCOLARES (solo admin)
 // -----------------------------------------------------------------------------
+// Tarjeta de resumen de los días no lectivos de un curso, para el interior del
+// acordeón de cada curso en «Cursos disponibles» (v2.37).
+function renderDiasNoLectivosCursoBox(c) {
+  const dias = getDiasNoLectivosCurso(c);
+  const grupos = resumenGruposDiasNoLectivos(dias);
+  return `
+  <div class="bg-amber-50/60 border border-amber-200 rounded-lg p-3">
+    <p class="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+      <svg class="w-3.5 h-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+      Días no lectivos · ${dias.length}
+    </p>
+    ${dias.length === 0 ? `
+      <p class="text-[11px] text-slate-400 italic mt-1">Sin días no lectivos importados. Se importan desde la sección «Curso activo» de esta pantalla y afectan únicamente al curso activo.</p>` : `
+      <div class="flex flex-wrap gap-1 mt-1.5">
+        ${grupos.map(([motivo, n]) => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-white border border-amber-200 text-amber-800" title="${escapeHtml(motivo)}: ${n} día(s)">${escapeHtml(motivo)}: <strong>${n}</strong></span>`).join("")}
+      </div>
+      <p class="text-[10px] text-slate-500 mt-1.5">Del ${formatDateES(normalizeDate(dias[0].fecha))} al ${formatDateES(normalizeDate(dias[dias.length - 1].fecha))} · en esos días no se pueden registrar evidencias.</p>`}
+  </div>`;
+}
+
 function viewCursosEscolares() {
   const cursos = state.cursos;
   const currentLabel = computeSchoolYearLabel(new Date());
   const sortedCursos = cursos.slice().sort((a, b) => (b.id || "").localeCompare(a.id || ""));
   const activeCurso = getCurrentCurso();
   const isForced = !!state.forcedCursoId;
+  const diasNLActivos = getDiasNoLectivosCurso(activeCurso);
+  const gruposNLActivos = resumenGruposDiasNoLectivos(diasNLActivos);
 
   return `
     <div class="space-y-5">
@@ -7611,12 +7854,45 @@ function viewCursosEscolares() {
                <span class="text-slate-500">Hoy (${formatDateES(new Date())}) pertenece al curso ${currentLabel}. La app usa este curso automáticamente.</span>`
           }
         </div>
+
+        <!-- Días no lectivos del curso activo: importación desde JSON (v2.37) -->
+        <div class="mt-4 pt-4 border-t border-slate-100">
+          <h3 class="text-sm font-bold text-slate-800 mb-1 flex items-center gap-2">
+            <svg class="w-4 h-4 ${isForced ? 'text-amber-600' : 'text-emerald-600'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            Días no lectivos del curso activo
+          </h3>
+          <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+            Importa el calendario de días no lectivos de <strong>${escapeHtml(activeCurso.label || activeCurso.id)}</strong> (festivos, períodos vacacionales, días de libre disposición…) desde un archivo <strong>.json</strong> como el que exporta la aplicación «Gestión de Asuntos Propios». Los días importados se incorporan <strong>exclusivamente a este curso</strong>: en ellos el profesorado no podrá registrar evidencias en el calendario de lectura ni en el de razonamiento matemático. Sábados y domingos ya se consideran no lectivos y no es necesario importarlos.
+          </p>
+          ${diasNLActivos.length === 0 ? `
+            <p class="text-xs text-slate-400 italic mb-3">Este curso no tiene días no lectivos importados todavía.</p>
+          ` : `
+            <div class="mb-3 bg-amber-50/70 border border-amber-200 rounded-lg p-3">
+              <p class="text-xs font-semibold text-amber-800">${diasNLActivos.length === 1 ? "1 día no lectivo" : `${diasNLActivos.length} días no lectivos`} · ${formatDateES(normalizeDate(diasNLActivos[0].fecha))} → ${formatDateES(normalizeDate(diasNLActivos[diasNLActivos.length - 1].fecha))}</p>
+              <div class="flex flex-wrap gap-1 mt-1.5">
+                ${gruposNLActivos.map(([motivo, n]) => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-white border border-amber-200 text-amber-800" title="${escapeHtml(motivo)}: ${n} día(s)">${escapeHtml(motivo)}: <strong>${n}</strong></span>`).join("")}
+              </div>
+            </div>
+          `}
+          <div class="flex flex-wrap gap-2">
+            <button data-action="import-dias-no-lectivos" class="px-3 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-medium flex items-center gap-1.5 shadow-sm">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Importar días no lectivos (.json)
+            </button>
+            ${diasNLActivos.length > 0 ? `
+            <button data-action="clear-dias-no-lectivos" class="px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium flex items-center gap-1.5 transition">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+              Vaciar
+            </button>` : ""}
+          </div>
+        </div>
       </div>
 
-      <!-- Listado de cursos con profesorado -->
+      <!-- Listado de cursos con profesorado (v2.37: acordeones, solo uno
+           desplegado a la vez e inicialmente todos replegados) -->
       <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div class="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-          <h2 class="text-sm font-bold text-slate-800">Cursos disponibles (${sortedCursos.length})</h2>
+          <h2 class="text-base font-bold text-slate-800">Cursos disponibles (${sortedCursos.length})</h2>
         </div>
         <div class="divide-y divide-slate-100">
           ${sortedCursos.length === 0 ? `
@@ -7628,24 +7904,30 @@ function viewCursosEscolares() {
             const startYear = parseInt(c.id.split("-")[0], 10);
             const prevCursoId = Number.isFinite(startYear) ? `${startYear - 1}-${startYear}` : null;
             const prevCurso = prevCursoId ? sortedCursos.find(pc => pc.id === prevCursoId) : null;
+            const diasNLCurso = getDiasNoLectivosCurso(c);
+            const profesoresTxt = profesores.length === 1 ? "1 profesor/a" : `${profesores.length} profesores`;
+            const diasNLTxt = diasNLCurso.length === 1 ? "1 día no lectivo" : `${diasNLCurso.length} días no lectivos`;
             return `
-              <div class="px-4 py-4 ${isActive ? 'bg-amber-50/40' : (isCurrent ? 'bg-emerald-50/30' : '')}">
-                <div class="flex items-center justify-between gap-3 mb-2">
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <span class="font-bold text-slate-800 text-base">${escapeHtml(c.label || c.id)}</span>
-                      ${isCurrent ? '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Vigente (auto)</span>' : ''}
-                      ${isActive && !isCurrent ? '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">Forzado</span>' : ''}
-                    </div>
-                    <p class="text-xs text-slate-500 mt-0.5">${formatDateES(new Date(c.start))} → ${formatDateES(new Date(c.end))}</p>
-                    <p class="text-[10px] text-slate-400 mt-0.5">Curso: ${c.start || "—"} → ${c.end || "—"} · Plan: ${c.planStart || "—"} → ${c.planEnd || "—"}</p>
+            <details data-acc-grupo="cursos" data-curso-acc="${c.id}" ${state.openCursoAcc === c.id ? "open" : ""} class="${isActive ? 'bg-amber-50/40' : (isCurrent ? 'bg-emerald-50/30' : 'bg-white')}">
+              <summary class="px-4 py-3.5 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-slate-50/60">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-bold text-slate-800 text-base">${escapeHtml(c.label || c.id)}</span>
+                    ${isActive
+                      ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">${isCurrent ? "Curso activo" : "Curso activo · forzado"}</span>`
+                      : (isCurrent ? `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Vigente (auto)</span>` : "")}
                   </div>
-                  <div class="flex items-center gap-2 shrink-0">
-                    ${isCurrent ? '' : `<button data-action="delete-curso" data-curso-id="${c.id}" class="text-xs px-2 py-1 rounded-md bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition">Eliminar</button>`}
-                  </div>
+                  <p class="text-xs text-slate-500 mt-0.5">${formatDateES(new Date(c.start))} → ${formatDateES(new Date(c.end))} · ${profesoresTxt}${diasNLCurso.length ? ` · ${diasNLTxt}` : ""}</p>
+                </div>
+                <svg class="w-4 h-4 text-slate-400 acc-chevron shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </summary>
+              <div class="px-4 pb-4 pt-1 space-y-2">
+                <div class="flex items-center justify-between gap-3 flex-wrap">
+                  <p class="text-[10px] text-slate-400">Curso: ${c.start || "—"} → ${c.end || "—"} · Plan: ${c.planStart || "—"} → ${c.planEnd || "—"}</p>
+                  ${isCurrent ? '' : `<button data-action="delete-curso" data-curso-id="${c.id}" class="text-xs px-2 py-1 rounded-md bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition">Eliminar</button>`}
                 </div>
                 <!-- Profesorado asignado -->
-                <div class="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <div class="bg-slate-50 border border-slate-200 rounded-lg p-3">
                   <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
                     <p class="text-xs font-semibold text-slate-700">Profesorado asignado (${profesores.length})</p>
                     <div class="flex items-center gap-1">
@@ -7672,7 +7954,7 @@ function viewCursosEscolares() {
                   const calEvals = getEvaluacionesDisplay(c);
                   const calTotal = totalWeeksOfEvals(calEvals);
                   return `
-                  <div class="mt-2 bg-indigo-50/60 border border-indigo-200 rounded-lg p-3">
+                  <div class="bg-indigo-50/60 border border-indigo-200 rounded-lg p-3">
                     <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
                       <p class="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                         <svg class="w-3.5 h-3.5 text-indigo-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -7689,7 +7971,10 @@ function viewCursosEscolares() {
                     </div>
                   </div>`;
                 })()}
-              </div>`;
+                <!-- Días no lectivos del curso (importados desde «Curso activo») -->
+                ${renderDiasNoLectivosCursoBox(c)}
+              </div>
+            </details>`;
           }).join("")}
         </div>
       </div>
@@ -7937,10 +8222,270 @@ Este curso tiene ${nEvs} evidencia(s) registrada(s): quedarán huérfanas (invis
       state.forcedCursoId = null;
       try { localStorage.removeItem("forcedCursoId"); } catch (e) {}
     }
+    if (state.openCursoAcc === id) state.openCursoAcc = null;
     renderMain();
   } catch (e) {
     console.error(e);
     alert("Error al eliminar el curso.");
+  }
+};
+
+// =============================================================================
+// DIÁLOGO: IMPORTAR DÍAS NO LECTIVOS DEL CURSO ACTIVO (solo admin, v2.37)
+// Lee el .json que exporta «Gestión de Asuntos Propios» (tipo "diasNoLectivos"),
+// muestra una vista previa y guarda los días en el documento del curso ACTIVO
+// (colección «cursos», campo «diasNoLectivos»), de modo que afectan únicamente
+// a ese curso. Sábados, domingos y fechas fuera del curso activo se descartan.
+// =============================================================================
+
+// Parsea el contenido de un export de días no lectivos. Lanza Error con mensaje
+// legible si el archivo no es válido. Devuelve:
+// { dias: [{fecha, categorias, detalle}], totalArchivo, finDeSemana,
+//   fueraDeCurso, invalidos, duplicados, cursoArchivo }
+function parseDiasNoLectivosFile(txt, curso) {
+  let data;
+  try {
+    data = JSON.parse(txt);
+  } catch (e) {
+    throw new Error("El archivo no contiene un JSON válido.");
+  }
+  if (!data || !Array.isArray(data.dias)) {
+    throw new Error('El JSON no parece un export de días no lectivos: falta la lista "dias".');
+  }
+  const bounds = {
+    start: curso.start || getSchoolYearBounds(curso.id || curso.label).start,
+    end: curso.end || getSchoolYearBounds(curso.id || curso.label).end,
+  };
+  const importables = new Map();
+  let finDeSemana = 0, fueraDeCurso = 0, invalidos = 0, duplicados = 0;
+  for (const d of data.dias) {
+    const fecha = d && typeof d.fecha === "string" ? d.fecha.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { invalidos++; continue; }
+    if (esFinDeSemanaISO(fecha)) { finDeSemana++; continue; } // sábados y domingos: no se importan
+    if ((bounds.start && fecha < bounds.start) || (bounds.end && fecha > bounds.end)) { fueraDeCurso++; continue; }
+    if (importables.has(fecha)) { duplicados++; continue; }
+    const cats = Array.isArray(d.categorias) ? d.categorias.map(c => String(c).trim()).filter(Boolean) : [];
+    importables.set(fecha, {
+      fecha,
+      categorias: cats,
+      detalle: typeof d.detalle === "string" ? d.detalle.trim() : "",
+    });
+  }
+  const dias = Array.from(importables.values()).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  return {
+    dias,
+    totalArchivo: data.dias.length,
+    finDeSemana,
+    fueraDeCurso,
+    invalidos,
+    duplicados,
+    cursoArchivo: typeof data.curso === "string" ? data.curso.trim() : "",
+  };
+}
+
+// Guarda en Firestore los días no lectivos de un curso. Escribe el documento
+// completo con merge: así el curso queda con todos sus campos (fechas, plan,
+// trimestres) aunque hasta ahora solo existiera en DEFAULT_CURSOS.
+async function saveDiasNoLectivosCurso(cursoId, dias) {
+  const curso = (state.cursos || []).find(c => c.id === cursoId);
+  if (!curso) throw new Error("No se encontró el curso " + cursoId);
+  const planStart = curso.planStart || computePlanStartForYear(curso.id);
+  let planEnd = curso.planEnd;
+  if (!planEnd) {
+    const pe = normalizeDate(planStart);
+    pe.setDate(pe.getDate() + 36 * 7 + 4);
+    planEnd = dateToISO(pe);
+  }
+  const payload = {
+    id: curso.id,
+    label: curso.label || curso.id,
+    start: curso.start || getSchoolYearBounds(curso.id).start,
+    end: curso.end || getSchoolYearBounds(curso.id).end,
+    planStart,
+    planEnd,
+    evaluaciones: (curso.evaluaciones && curso.evaluaciones.length) ? curso.evaluaciones : generateEvaluacionesForCurso({ planStart }),
+    diasNoLectivos: dias,
+    diasNoLectivosUpdatedAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await setDoc(doc(db, CURSOS_COLLECTION, curso.id), payload, { merge: true });
+  return dias;
+}
+
+window._openImportDiasNoLectivosDialog = () => {
+  document.getElementById("dnl-dialog")?.remove();
+  const curso = getCurrentCurso();
+  const existentes = getDiasNoLectivosCurso(curso);
+  window._dnlDraft = {
+    cursoId: curso.id,
+    cursoLabel: curso.label || curso.id,
+    parsed: null,
+    error: null,
+    existentes: existentes.length,
+  };
+  const overlay = document.createElement("div");
+  overlay.id = "dnl-dialog";
+  overlay.className = "fixed inset-0 z-50 flex items-center justify-center p-3";
+  overlay.innerHTML = `
+    <div class="absolute inset-0 dialog-overlay" data-action="close-dnl-dialog"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto fade-in">
+      <div class="p-5 border-b border-slate-200">
+        <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-5 h-5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Importar días no lectivos
+        </h2>
+        <p class="text-sm text-slate-500 mt-1">Curso activo: <strong>${escapeHtml(window._dnlDraft.cursoLabel)}</strong>. Los días importados se incorporan exclusivamente a este curso: en ellos el profesorado no podrá registrar evidencias en los cronogramas de lectura y de razonamiento matemático.</p>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900 leading-relaxed">
+          El archivo debe ser un <strong>.json</strong> exportado de la aplicación «Gestión de Asuntos Propios» (tipo <code class="bg-white/70 px-1 rounded">diasNoLectivos</code>). Los <strong>sábados y domingos</strong> (ya no lectivos de por sí) y las fechas fuera del curso ${escapeHtml(window._dnlDraft.cursoLabel)} se ignoran automáticamente.
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Archivo JSON *</label>
+          <input type="file" id="dnl-file" accept=".json,application/json" class="w-full h-11 px-3 rounded-lg border border-slate-300 outline-none bg-white text-sm" />
+        </div>
+        <div id="dnl-body"></div>
+        <label class="flex items-center gap-2 text-sm text-slate-700 select-none ${window._dnlDraft.existentes ? "" : "hidden"}" id="dnl-add-wrap">
+          <input id="dnl-add" type="checkbox" class="w-4 h-4 rounded border-slate-300 text-blue-600" />
+          <span>Añadir a los ${window._dnlDraft.existentes} día(s) ya importados <span class="text-slate-400 font-normal">(si se desmarca, se reemplazan)</span></span>
+        </label>
+        <div id="dnl-error" class="hidden text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2"></div>
+      </div>
+      <div class="p-4 border-t border-slate-200 flex justify-end gap-2 sticky bottom-0 bg-white rounded-b-2xl">
+        <button data-action="close-dnl-dialog" class="px-4 py-2 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium">Cancelar</button>
+        <button data-action="confirm-import-dnl" id="dnl-confirm" disabled class="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span id="dnl-confirm-label">Importar días</span>
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Leer el archivo elegido, parsearlo y repintar la vista previa
+  overlay.querySelector("#dnl-file").addEventListener("change", async (e) => {
+    const f = e.target.files && e.target.files[0];
+    window._dnlDraft.parsed = null;
+    window._dnlDraft.error = null;
+    if (!f) { window._dnlRenderBody(); return; }
+    try {
+      const txt = await f.text();
+      const cursoAct = (state.cursos || []).find(c => c.id === window._dnlDraft.cursoId) || getCurrentCurso();
+      window._dnlDraft.parsed = parseDiasNoLectivosFile(txt, cursoAct);
+    } catch (err) {
+      window._dnlDraft.error = err && err.message ? err.message : "No se pudo leer el archivo.";
+    }
+    window._dnlRenderBody();
+  });
+  window._dnlRenderBody();
+};
+
+// Pinta el resumen y la vista previa de los días que se van a importar
+window._dnlRenderBody = () => {
+  const body = document.getElementById("dnl-body");
+  const confirmBtn = document.getElementById("dnl-confirm");
+  const confirmLbl = document.getElementById("dnl-confirm-label");
+  const err = document.getElementById("dnl-error");
+  if (!body || !window._dnlDraft) return;
+  if (err) err.classList.add("hidden");
+  const setConfirm = (enabled, label) => {
+    if (confirmBtn) confirmBtn.disabled = !enabled;
+    if (confirmLbl) confirmLbl.textContent = label;
+  };
+  if (window._dnlDraft.error) {
+    body.innerHTML = `<div class="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">${escapeHtml(window._dnlDraft.error)}</div>`;
+    setConfirm(false, "Importar días");
+    return;
+  }
+  const p = window._dnlDraft.parsed;
+  if (!p) {
+    body.innerHTML = `<p class="text-xs text-slate-400">Selecciona un archivo .json para ver aquí la vista previa de los días que se importarán.</p>`;
+    setConfirm(false, "Importar días");
+    return;
+  }
+  const cursoArchivoNorm = p.cursoArchivo.replace(/\//g, "-");
+  const avisoCurso = p.cursoArchivo && cursoArchivoNorm !== window._dnlDraft.cursoId
+    ? `<div class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">El archivo declara el curso <strong>${escapeHtml(p.cursoArchivo)}</strong>, distinto del curso activo (<strong>${escapeHtml(window._dnlDraft.cursoLabel)}</strong>). Solo se importarán las fechas dentro del curso activo.</div>`
+    : "";
+  body.innerHTML = `
+    <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs space-y-1">
+      <p>Archivo con <strong>${p.totalArchivo}</strong> día(s)${p.cursoArchivo ? ` · curso declarado: <strong>${escapeHtml(p.cursoArchivo)}</strong>` : ""}.</p>
+      ${p.finDeSemana ? `<p class="text-slate-500">${p.finDeSemana} ignorado(s) por ser sábado o domingo.</p>` : ""}
+      ${p.fueraDeCurso ? `<p class="text-slate-500">${p.fueraDeCurso} fuera del curso activo (ignorado(s)).</p>` : ""}
+      ${p.invalidos ? `<p class="text-slate-500">${p.invalidos} entrada(s) sin fecha válida (ignorada(s)).</p>` : ""}
+      ${p.duplicados ? `<p class="text-slate-500">${p.duplicados} duplicada(s) en el archivo (se importa una sola vez).</p>` : ""}
+      <p class="text-emerald-700 font-semibold pt-1">Se importarán ${p.dias.length} día(s) no lectivo(s) al curso ${escapeHtml(window._dnlDraft.cursoLabel)}.</p>
+      ${p.dias.length === 0 ? `<p class="text-amber-700">Ningún día del archivo es importable para este curso. ¿Es del curso y del centro correctos?</p>` : ""}
+    </div>
+    ${avisoCurso}
+    ${p.dias.length ? `
+    <div class="border border-slate-200 rounded-lg overflow-hidden">
+      <p class="px-3 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600">Vista previa de los días no lectivos</p>
+      <div class="max-h-52 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
+        ${p.dias.map(d => {
+          const dsem = NOMBRES_DIA_SEMANA[normalizeDate(d.fecha).getDay()] || "";
+          const motivo = d.detalle || (d.categorias.length ? d.categorias[0] : "No lectivo");
+          return `<p class="text-[11px] text-slate-600 flex items-center gap-1 min-w-0"><span class="font-semibold text-slate-700 shrink-0">${formatDateES(normalizeDate(d.fecha))}</span><span class="text-slate-400 shrink-0">${dsem}</span><span class="truncate text-amber-700">· ${escapeHtml(motivo)}</span></p>`;
+        }).join("")}
+      </div>
+    </div>` : ""}`;
+  setConfirm(p.dias.length > 0, p.dias.length ? `Importar ${p.dias.length} día(s)` : "Importar días");
+};
+
+window._closeImportDiasNoLectivosDialog = () => {
+  document.getElementById("dnl-dialog")?.remove();
+  window._dnlDraft = null;
+};
+
+window._confirmImportDiasNoLectivos = async () => {
+  const draft = window._dnlDraft;
+  if (!draft || !draft.parsed || !draft.parsed.dias.length) return;
+  const importados = draft.parsed.dias.length;
+  const cursoLabelTxt = draft.cursoLabel;
+  const btn = document.getElementById("dnl-confirm");
+  const err = document.getElementById("dnl-error");
+  const lbl = document.getElementById("dnl-confirm-label");
+  if (btn) btn.disabled = true;
+  if (lbl) lbl.textContent = "Importando…";
+  try {
+    const anadir = !!document.getElementById("dnl-add")?.checked;
+    const curso = (state.cursos || []).find(c => c.id === draft.cursoId) || getCurrentCurso();
+    // Reemplazar (por defecto) o añadir a los existentes; en duplicados, el
+    // archivo recién importado manda sobre lo que hubiera antes.
+    const base = anadir ? getDiasNoLectivosCurso(curso) : [];
+    const mapa = new Map(base.map(d => [d.fecha, d]));
+    draft.parsed.dias.forEach(d => mapa.set(d.fecha, d));
+    const finales = Array.from(mapa.values()).sort((a, b) => a.fecha.localeCompare(b.fecha));
+    await saveDiasNoLectivosCurso(draft.cursoId, finales);
+    // Actualización optimista: la suscripción en tiempo real confirmará en breve
+    const cursoLocal = (state.cursos || []).find(c => c.id === draft.cursoId);
+    if (cursoLocal) cursoLocal.diasNoLectivos = finales;
+    window._closeImportDiasNoLectivosDialog();
+    alert(`Importados ${importados} día(s) no lectivo(s) al curso ${cursoLabelTxt}.\n\nTotal de días no lectivos del curso: ${finales.length}.\n\nEn esos días el profesorado no podrá registrar evidencias en los cronogramas de lectura y de razonamiento matemático (las semanas completamente no lectivas quedarán bloqueadas).`);
+    renderMain();
+  } catch (e) {
+    console.error("[dnl] Error al importar días no lectivos:", e);
+    if (err) {
+      err.textContent = "Error al importar: " + (e.code || e.message || "desconocido");
+      err.classList.remove("hidden");
+    }
+    if (btn) btn.disabled = false;
+    if (lbl) lbl.textContent = `Importar ${importados} día(s)`;
+  }
+};
+
+// Vacía los días no lectivos importados del curso activo
+window._clearDiasNoLectivos = async () => {
+  const curso = getCurrentCurso();
+  const n = getDiasNoLectivosCurso(curso).length;
+  if (!n) return;
+  if (!confirm(`¿Vaciar los ${n} día(s) no lectivos importados del curso ${curso.label || curso.id}?\n\nTodos los días del curso volverán a admitir el registro de evidencias (a efectos de la app; sábados y domingos nunca aparecen en los cronogramas).`)) return;
+  try {
+    await saveDiasNoLectivosCurso(curso.id, []);
+    const cursoLocal = (state.cursos || []).find(c => c.id === curso.id);
+    if (cursoLocal) cursoLocal.diasNoLectivos = [];
+    renderMain();
+  } catch (e) {
+    console.error("[dnl] Error al vaciar días no lectivos:", e);
+    alert("Error al vaciar los días no lectivos: " + (e.code || e.message || "desconocido"));
   }
 };
 
