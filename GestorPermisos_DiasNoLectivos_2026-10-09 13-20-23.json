@@ -1,0 +1,474 @@
+{
+  "app": "Gestión de Asuntos Propios",
+  "tipo": "diasNoLectivos",
+  "curso": "2026/2027",
+  "fechaExportacion": "2026-10-09T11:20:23.809Z",
+  "total": 58,
+  "dias": [
+    {
+      "fecha": "2026-09-01",
+      "diaSemana": "martes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-02",
+      "diaSemana": "miércoles",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-03",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-04",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-05",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-06",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-07",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-08",
+      "diaSemana": "martes",
+      "categorias": [
+        "Festivo",
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-09",
+      "diaSemana": "miércoles",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-10",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-11",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-12",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-13",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-09-14",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-10-12",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Festivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-11-02",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Festivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-12-07",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Festivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-12-08",
+      "diaSemana": "martes",
+      "categorias": [
+        "Festivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2026-12-24",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-25",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-26",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-27",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-28",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-29",
+      "diaSemana": "martes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-30",
+      "diaSemana": "miércoles",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2026-12-31",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-01",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-02",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-03",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-04",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-05",
+      "diaSemana": "martes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-06",
+      "diaSemana": "miércoles",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-07",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-08",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-09",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-01-10",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Navidad"
+    },
+    {
+      "fecha": "2027-02-01",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Libre Disposición"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-02-26",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Festivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-03-01",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Festivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-03-20",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-21",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-22",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-23",
+      "diaSemana": "martes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-24",
+      "diaSemana": "miércoles",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-25",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-26",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-27",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-28",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Período Vacacional"
+      ],
+      "detalle": "Semana Santa"
+    },
+    {
+      "fecha": "2027-03-29",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Libre Disposición"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-05-03",
+      "diaSemana": "lunes",
+      "categorias": [
+        "No Lectivo Comunicado"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-05-17",
+      "diaSemana": "lunes",
+      "categorias": [
+        "No Lectivo Comunicado"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-24",
+      "diaSemana": "jueves",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-25",
+      "diaSemana": "viernes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-26",
+      "diaSemana": "sábado",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-27",
+      "diaSemana": "domingo",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-28",
+      "diaSemana": "lunes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-29",
+      "diaSemana": "martes",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    },
+    {
+      "fecha": "2027-06-30",
+      "diaSemana": "miércoles",
+      "categorias": [
+        "Laborable No Lectivo"
+      ],
+      "detalle": ""
+    }
+  ]
+}
