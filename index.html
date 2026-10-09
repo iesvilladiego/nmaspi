@@ -218,6 +218,28 @@ document.addEventListener("click", (e) => {
       case "clear-dias-no-lectivos":
         window._clearDiasNoLectivos && window._clearDiasNoLectivos();
         break;
+      // --- Gestión manual de días no lectivos: alta, edición y borrado (v2.40) ---
+      case "open-manage-dnl":
+        window._openManageDiasNoLectivosDialog && window._openManageDiasNoLectivosDialog(btn.dataset.cursoId);
+        break;
+      case "close-dnl-manage-dialog":
+        window._closeManageDiasNoLectivosDialog && window._closeManageDiasNoLectivosDialog();
+        break;
+      case "dnl-manage-add":
+        window._dnlManageAdd && window._dnlManageAdd();
+        break;
+      case "dnl-manage-edit":
+        window._dnlManageStartEdit && window._dnlManageStartEdit(btn.dataset.fecha);
+        break;
+      case "dnl-manage-cancel-edit":
+        window._dnlManageCancelEdit && window._dnlManageCancelEdit();
+        break;
+      case "dnl-manage-save-edit":
+        window._dnlManageSaveEdit && window._dnlManageSaveEdit(btn.dataset.fecha);
+        break;
+      case "dnl-manage-delete":
+        window._dnlManageDelete && window._dnlManageDelete(btn.dataset.fecha);
+        break;
       // --- Calendario del curso (trimestres) ---
       case "edit-calendario":
         window._openCalendarioDialog && window._openCalendarioDialog(btn.dataset.cursoId);
@@ -438,7 +460,7 @@ const INSTITUTO = {
 // (v2.38), en el pie del login y en el panel de gestión de usuarios para poder
 // comprobar de un vistazo si el dispositivo está ejecutando la versión nueva o
 // una copia antigua cacheada por la PWA.
-const APP_VERSION = "2.39";
+const APP_VERSION = "2.40";
 
 // Versión de la aplicación para el chip del banner de cabecera: se pregunta al
 // service worker activo (su CACHE_NAME, p. ej. "nmaspi-v2.34" → "2.34") con un
@@ -1115,9 +1137,12 @@ const DIA_SEMANA = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"];
 // El calendario de días no lectivos (festivos, períodos vacacionales, días de
 // libre disposición…) se importa en la pantalla «Cursos escolares», dentro de la
 // sección «Curso activo», desde un .json exportado por la aplicación «Gestión de
-// Asuntos Propios». Se guarda en el documento del curso (campo «diasNoLectivos»),
-// de modo que afecta EXCLUSIVAMENTE a ese curso: los demás cursos no se ven
-// afectados. Los sábados y domingos son siempre no lectivos y no se importan.
+// Asuntos Propios», y desde v2.40 también se gestiona a mano (añadir, modificar
+// o eliminar días uno a uno) con el diálogo «Gestionar días no lectivos»,
+// disponible en la sección «Curso activo» y en el acordeón de cada curso. Se
+// guarda en el documento del curso (campo «diasNoLectivos»), de modo que afecta
+// EXCLUSIVAMENTE a ese curso: los demás cursos no se ven afectados. Los sábados
+// y domingos son siempre no lectivos y no se importan ni se marcan a mano.
 // Efecto: en los días no lectivos el profesorado no puede AÑADIR evidencias al
 // cronograma del Plan Lector (día a día) ni al de Razonamiento Matemático (sus
 // sesiones no tienen día fijo, así que una semana solo queda bloqueada cuando
@@ -2870,7 +2895,7 @@ window._fechaUtils = { computeWeeksFromRange, totalWeeksOfEvals, evaluacionesWee
 window._diasNoLectivosUtils = {
   esFinDeSemanaISO, esDiaNoLectivo, infoDiaNoLectivo, getDiasNoLectivosCurso,
   getInfoNoLectivaSemana, motivoDiaNoLectivo, resumenGruposDiasNoLectivos,
-  parseDiasNoLectivosFile,
+  parseDiasNoLectivosFile, validarFechaDiasNoLectivos,
 };
 
 // -----------------------------------------------------------------------------
@@ -7803,12 +7828,18 @@ function renderDiasNoLectivosCursoBox(c) {
   const grupos = resumenGruposDiasNoLectivos(dias);
   return `
   <div class="bg-amber-50/60 border border-amber-200 rounded-lg p-3">
-    <p class="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-      <svg class="w-3.5 h-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-      Días no lectivos · ${dias.length}
-    </p>
+    <div class="flex items-center justify-between gap-2">
+      <p class="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+        Días no lectivos · ${dias.length}
+      </p>
+      <button data-action="open-manage-dnl" data-curso-id="${c.id}" title="Añadir, modificar o eliminar los días no lectivos de ${escapeHtml(c.label || c.id)}" class="text-[11px] px-2 py-1 rounded-md bg-white border border-amber-200 text-amber-800 hover:bg-amber-100 transition flex items-center gap-1 shrink-0">
+        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Gestionar
+      </button>
+    </div>
     ${dias.length === 0 ? `
-      <p class="text-[11px] text-slate-400 italic mt-1">Sin días no lectivos importados. Se importan desde la sección «Curso activo» de esta pantalla y afectan únicamente al curso activo.</p>` : `
+      <p class="text-[11px] text-slate-400 italic mt-1">Sin días no lectivos todavía. Añádelos con «Gestionar» o impórtalos desde la sección «Curso activo» de esta pantalla; afectan únicamente a este curso.</p>` : `
       <div class="flex flex-wrap gap-1 mt-1.5">
         ${grupos.map(([motivo, n]) => `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-white border border-amber-200 text-amber-800" title="${escapeHtml(motivo)}: ${n} día(s)">${escapeHtml(motivo)}: <strong>${n}</strong></span>`).join("")}
       </div>
@@ -7870,10 +7901,10 @@ function viewCursosEscolares() {
             Días no lectivos del curso activo
           </h3>
           <p class="text-xs text-slate-500 mb-3 leading-relaxed">
-            Importa el calendario de días no lectivos de <strong>${escapeHtml(activeCurso.label || activeCurso.id)}</strong> (festivos, períodos vacacionales, días de libre disposición…) desde un archivo <strong>.json</strong> como el que exporta la aplicación «Gestión de Asuntos Propios». Los días importados se incorporan <strong>exclusivamente a este curso</strong>: en ellos el profesorado no podrá registrar evidencias en el calendario de lectura ni en el de razonamiento matemático. Sábados y domingos ya se consideran no lectivos y no es necesario importarlos.
+            Gestiona el calendario de días no lectivos de <strong>${escapeHtml(activeCurso.label || activeCurso.id)}</strong> (festivos, períodos vacacionales, días de libre disposición…): impórtalo desde un archivo <strong>.json</strong> como el que exporta la aplicación «Gestión de Asuntos Propios» o edítalo a mano con «Gestionar días no lectivos» (añadir, modificar o eliminar días uno a uno). Los días marcados se incorporan <strong>exclusivamente a este curso</strong>: en ellos el profesorado no podrá registrar evidencias en el calendario de lectura ni en el de razonamiento matemático. Sábados y domingos ya se consideran no lectivos y no es necesario marcarlos.
           </p>
           ${diasNLActivos.length === 0 ? `
-            <p class="text-xs text-slate-400 italic mb-3">Este curso no tiene días no lectivos importados todavía.</p>
+            <p class="text-xs text-slate-400 italic mb-3">Este curso no tiene días no lectivos todavía: añádelos con «Gestionar días no lectivos» o impórtalos desde un archivo .json.</p>
           ` : `
             <div class="mb-3 bg-amber-50/70 border border-amber-200 rounded-lg p-3">
               <p class="text-xs font-semibold text-amber-800">${diasNLActivos.length === 1 ? "1 día no lectivo" : `${diasNLActivos.length} días no lectivos`} · ${formatDateES(normalizeDate(diasNLActivos[0].fecha))} → ${formatDateES(normalizeDate(diasNLActivos[diasNLActivos.length - 1].fecha))}</p>
@@ -7886,6 +7917,10 @@ function viewCursosEscolares() {
             <button data-action="import-dias-no-lectivos" class="px-3 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-medium flex items-center gap-1.5 shadow-sm">
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Importar días no lectivos (.json)
+            </button>
+            <button data-action="open-manage-dnl" data-curso-id="${activeCurso.id}" title="Añadir, modificar o eliminar días no lectivos de este curso" class="px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-sm font-medium flex items-center gap-1.5 transition shadow-sm">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              Gestionar días no lectivos
             </button>
             ${diasNLActivos.length > 0 ? `
             <button data-action="clear-dias-no-lectivos" class="px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 text-sm font-medium flex items-center gap-1.5 transition">
@@ -8244,6 +8279,8 @@ Este curso tiene ${nEvs} evidencia(s) registrada(s): quedarán huérfanas (invis
 // muestra una vista previa y guarda los días en el documento del curso ACTIVO
 // (colección «cursos», campo «diasNoLectivos»), de modo que afectan únicamente
 // a ese curso. Sábados, domingos y fechas fuera del curso activo se descartan.
+// La edición manual (añadir, modificar o eliminar días uno a uno) está en el
+// diálogo «Gestionar días no lectivos» (v2.40), más abajo en esta sección.
 // =============================================================================
 
 // Parsea el contenido de un export de días no lectivos. Lanza Error con mensaje
@@ -8441,6 +8478,8 @@ window._dnlRenderBody = () => {
 window._closeImportDiasNoLectivosDialog = () => {
   document.getElementById("dnl-dialog")?.remove();
   window._dnlDraft = null;
+  // (v2.40) si el diálogo de gestión quedó abierto debajo, refrescar su listado
+  if (document.getElementById("dnl-manage-dialog")) window._dnlManageRenderBody?.();
 };
 
 window._confirmImportDiasNoLectivos = async () => {
@@ -8495,6 +8534,314 @@ window._clearDiasNoLectivos = async () => {
     console.error("[dnl] Error al vaciar días no lectivos:", e);
     alert("Error al vaciar los días no lectivos: " + (e.code || e.message || "desconocido"));
   }
+};
+
+// =============================================================================
+// DIÁLOGO: GESTIONAR DÍAS NO LECTIVOS DE UN CURSO (v2.40)
+// Alta, modificación y borrado manual de días no lectivos, uno a uno, además de
+// la importación masiva desde .json. Cada operación se guarda al instante en el
+// documento del curso (colección «cursos», campo «diasNoLectivos») y repinta el
+// diálogo y la vista inferior. Las validaciones rechazan fechas fuera del
+// curso, fines de semana (ya no lectivos de por sí) y duplicados.
+// =============================================================================
+
+// Valida la fecha de un día no lectivo manual: formato, día real, fin de
+// semana, rango del curso y duplicados (ignorando la fecha que se edita).
+// Devuelve null si todo es correcto o un mensaje de error legible.
+function validarFechaDiasNoLectivos(fecha, curso, ignorarFecha) {
+  if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return "Indica una fecha válida.";
+  const d = normalizeDate(fecha);
+  if (isNaN(d.getTime())) return "La fecha indicada no existe en el calendario.";
+  const dow = d.getDay();
+  if (dow === 0 || dow === 6) {
+    return `El ${formatDateES(d)} es ${NOMBRES_DIA_SEMANA[dow]}: los fines de semana ya son no lectivos de por sí y no se marcan.`;
+  }
+  const bounds = {
+    start: curso.start || getSchoolYearBounds(curso.id || curso.label).start,
+    end: curso.end || getSchoolYearBounds(curso.id || curso.label).end,
+  };
+  if ((bounds.start && fecha < bounds.start) || (bounds.end && fecha > bounds.end)) {
+    return `La fecha está fuera del curso ${curso.label || curso.id} (${formatDateES(normalizeDate(bounds.start))} → ${formatDateES(normalizeDate(bounds.end))}).`;
+  }
+  if (fecha !== ignorarFecha && getDiasNoLectivosCurso(curso).some(x => x.fecha === fecha)) {
+    return `El ${formatDateES(d)} ya está marcado como día no lectivo.`;
+  }
+  return null;
+}
+
+window._openManageDiasNoLectivosDialog = (cursoId) => {
+  document.getElementById("dnl-manage-dialog")?.remove();
+  const curso = (state.cursos || []).find(c => c.id === cursoId) || getCurrentCurso();
+  const bounds = {
+    start: curso.start || getSchoolYearBounds(curso.id || curso.label).start,
+    end: curso.end || getSchoolYearBounds(curso.id || curso.label).end,
+  };
+  window._dnlManageDraft = {
+    cursoId: curso.id,
+    cursoLabel: curso.label || curso.id,
+    filter: "",
+    editing: null,
+  };
+  const overlay = document.createElement("div");
+  overlay.id = "dnl-manage-dialog";
+  overlay.className = "fixed inset-0 z-50 flex items-center justify-center p-3";
+  overlay.innerHTML = `
+    <div class="absolute inset-0 dialog-overlay" data-action="close-dnl-manage-dialog"></div>
+    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto fade-in">
+      <div class="p-5 border-b border-slate-200">
+        <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-5 h-5 text-amber-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Gestionar días no lectivos
+        </h2>
+        <p class="text-sm text-slate-500 mt-1">Curso: <strong>${escapeHtml(window._dnlManageDraft.cursoLabel)}</strong>. Añade, modifica o elimina días no lectivos: en ellos el profesorado no podrá registrar evidencias en los cronogramas de lectura y de razonamiento matemático. Cada cambio se guarda al instante.</p>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900 leading-relaxed">
+          Las fechas deben estar dentro del curso (${formatDateES(normalizeDate(bounds.start))} → ${formatDateES(normalizeDate(bounds.end))}). Los <strong>sábados y domingos</strong> ya son no lectivos de por sí y se rechazan.
+        </div>
+        <div class="bg-amber-50/70 border border-amber-200 rounded-lg p-3">
+          <p class="text-xs font-semibold text-slate-700 mb-2">Añadir un día no lectivo</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input type="date" id="dnl-m-fecha" min="${bounds.start}" max="${bounds.end}" class="w-full h-10 px-3 rounded-lg border border-slate-300 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 bg-white text-sm" />
+            <input type="text" id="dnl-m-motivo" list="dnl-m-motivos-comunes" placeholder="Motivo (opcional): Navidad, Festivo…" class="w-full h-10 px-3 rounded-lg border border-slate-300 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100 bg-white text-sm" />
+          </div>
+          <datalist id="dnl-m-motivos-comunes">
+            <option value="Festivo"></option>
+            <option value="Vacaciones de Navidad"></option>
+            <option value="Vacaciones de Semana Santa"></option>
+            <option value="Día de libre disposición"></option>
+            <option value="Puente"></option>
+            <option value="Festivo local"></option>
+            <option value="Huelga"></option>
+          </datalist>
+          <button data-action="dnl-manage-add" class="mt-2 px-3 py-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-sm font-semibold flex items-center gap-1.5 shadow-sm">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Añadir día
+          </button>
+        </div>
+        <div id="dnl-m-ok" class="hidden text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2.5 py-1.5"></div>
+        <div id="dnl-m-error" class="hidden text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-2.5 py-1.5"></div>
+        <div id="dnl-m-body"></div>
+      </div>
+      <div class="p-4 border-t border-slate-200 flex justify-end sticky bottom-0 bg-white rounded-b-2xl">
+        <button data-action="close-dnl-manage-dialog" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-800 text-white text-sm font-medium">Cerrar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Enter en el formulario de alta añade el día directamente (v2.40)
+  ["dnl-m-fecha", "dnl-m-motivo"].forEach(id => {
+    const el = overlay.querySelector("#" + id);
+    if (el) el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); window._dnlManageAdd(); }
+    });
+  });
+  window._dnlManageRenderBody();
+};
+
+// Cuerpo del diálogo: listado filtrable con edición en línea y estado vacío
+window._dnlManageRenderBody = () => {
+  const body = document.getElementById("dnl-m-body");
+  if (!body || !window._dnlManageDraft) return;
+  const draft = window._dnlManageDraft;
+  const curso = (state.cursos || []).find(c => c.id === draft.cursoId) || getCurrentCurso();
+  const dias = getDiasNoLectivosCurso(curso);
+  const bounds = {
+    start: curso.start || getSchoolYearBounds(curso.id || curso.label).start,
+    end: curso.end || getSchoolYearBounds(curso.id || curso.label).end,
+  };
+  const q = (draft.filter || "").trim().toLowerCase();
+  const visibles = q
+    ? dias.filter(d => {
+        const motivo = motivoDiaNoLectivo(d).toLowerCase();
+        const dsem = (NOMBRES_DIA_SEMANA[normalizeDate(d.fecha).getDay()] || "").toLowerCase();
+        return d.fecha.toLowerCase().includes(q) || motivo.includes(q)
+          || dsem.includes(q) || formatDateES(normalizeDate(d.fecha)).includes(q);
+      })
+    : dias;
+  const esActivo = curso.id === getCurrentCurso().id;
+  const filaDia = (d) => {
+    const dsem = NOMBRES_DIA_SEMANA[normalizeDate(d.fecha).getDay()] || "";
+    const motivo = motivoDiaNoLectivo(d);
+    if (draft.editing === d.fecha) {
+      return `
+      <div class="px-2.5 py-2 bg-amber-50 border border-amber-300 rounded-lg space-y-2">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input type="date" id="dnl-m-edit-fecha" value="${d.fecha}" min="${bounds.start}" max="${bounds.end}" class="w-full h-9 px-2.5 rounded-md border border-amber-300 outline-none focus:border-amber-500 bg-white text-sm" />
+          <input type="text" id="dnl-m-edit-motivo" list="dnl-m-motivos-comunes" value="${escapeHtml(d.detalle)}" placeholder="Motivo (opcional)…" class="w-full h-9 px-2.5 rounded-md border border-amber-300 outline-none focus:border-amber-500 bg-white text-sm" />
+        </div>
+        <div class="flex justify-end gap-1.5">
+          <button data-action="dnl-manage-cancel-edit" class="px-2.5 py-1 rounded-md border border-slate-300 hover:bg-slate-100 text-xs font-medium text-slate-600">Cancelar</button>
+          <button data-action="dnl-manage-save-edit" data-fecha="${d.fecha}" class="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold flex items-center gap-1">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            Guardar
+          </button>
+        </div>
+      </div>`;
+    }
+    return `
+    <div class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-slate-50/70">
+      <span class="text-xs font-bold text-slate-700 shrink-0 tabular-nums">${formatDateES(normalizeDate(d.fecha))}</span>
+      <span class="text-[10px] text-slate-400 w-[68px] shrink-0 hidden sm:inline">${dsem}</span>
+      <span class="text-xs text-amber-700 truncate flex-1" title="${escapeHtml(motivo)}">${escapeHtml(motivo)}</span>
+      <span class="flex items-center gap-1 shrink-0">
+        <button data-action="dnl-manage-edit" data-fecha="${d.fecha}" title="Modificar este día" class="w-7 h-7 rounded-md flex items-center justify-center text-slate-500 hover:text-amber-700 hover:bg-amber-100 transition">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button data-action="dnl-manage-delete" data-fecha="${d.fecha}" title="Eliminar este día" class="w-7 h-7 rounded-md flex items-center justify-center text-slate-500 hover:text-red-600 hover:bg-red-100 transition">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        </button>
+      </span>
+    </div>`;
+  };
+  body.innerHTML = dias.length === 0 ? `
+    <p class="text-xs text-slate-400 italic py-1">Este curso no tiene días no lectivos todavía. Añádelos con el formulario de arriba${esActivo ? ` o <button data-action="import-dias-no-lectivos" class="text-amber-700 underline hover:text-amber-800 font-semibold">importa un archivo .json</button>` : ""}.</p>` : `
+    <div class="flex items-center justify-between gap-2 flex-wrap">
+      <p class="text-xs font-semibold text-slate-600">${dias.length === 1 ? "1 día no lectivo" : dias.length + " días no lectivos"}${q && visibles.length !== dias.length ? " · " + (visibles.length === 1 ? "1 coincide" : visibles.length + " coinciden") + " con el filtro" : ""}</p>
+      <input type="text" id="dnl-m-filter" value="${escapeHtml(draft.filter || "")}" placeholder="Filtrar por fecha o motivo…" class="h-8 px-2.5 rounded-md border border-slate-300 outline-none focus:border-amber-500 text-xs w-44 sm:w-56" />
+    </div>
+    ${visibles.length === 0 ? `<p class="text-xs text-slate-400 italic py-2">Ningún día coincide con «${escapeHtml(draft.filter || "")}».</p>` : `
+    <div class="border border-slate-200 rounded-lg max-h-[44vh] overflow-y-auto p-1.5 space-y-0.5" id="dnl-m-list">
+      ${visibles.map(filaDia).join("")}
+    </div>`}`;
+  // Filtro en vivo (v2.40): re-render manteniendo foco y cursor al final
+  const filterEl = document.getElementById("dnl-m-filter");
+  if (filterEl) {
+    filterEl.addEventListener("input", (e) => {
+      if (window._dnlManageDraft) window._dnlManageDraft.filter = e.target.value || "";
+      window._dnlManageRenderBody();
+      const f2 = document.getElementById("dnl-m-filter");
+      if (f2 && f2.focus) {
+        f2.focus();
+        try { f2.setSelectionRange(f2.value.length, f2.value.length); } catch (err) { /* input no soporta selección */ }
+      }
+    });
+  }
+  // Enter en el formulario de edición guarda los cambios (v2.40)
+  if (draft.editing) {
+    ["dnl-m-edit-fecha", "dnl-m-edit-motivo"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); window._dnlManageSaveEdit(draft.editing); }
+      });
+    });
+  }
+};
+
+window._closeManageDiasNoLectivosDialog = () => {
+  document.getElementById("dnl-manage-dialog")?.remove();
+  window._dnlManageDraft = null;
+};
+
+// Guarda la lista resultante, actualiza el estado local y repinta diálogo+vista
+window._dnlManageApply = async (curso, nuevos, okMsg) => {
+  const err = document.getElementById("dnl-m-error");
+  const ok = document.getElementById("dnl-m-ok");
+  try {
+    await saveDiasNoLectivosCurso(curso.id, nuevos);
+    // Actualización optimista: la suscripción en tiempo real confirmará en breve
+    const cursoLocal = (state.cursos || []).find(c => c.id === curso.id);
+    if (cursoLocal) cursoLocal.diasNoLectivos = nuevos;
+    if (err) err.classList.add("hidden");
+    if (ok && okMsg) { ok.textContent = okMsg; ok.classList.remove("hidden"); }
+    if (window._dnlManageDraft) window._dnlManageDraft.editing = null;
+    window._dnlManageRenderBody();
+    renderMain();
+  } catch (e) {
+    console.error("[dnl] Error al guardar los días no lectivos:", e);
+    if (ok) ok.classList.add("hidden");
+    if (err) {
+      err.textContent = "Error al guardar: " + (e.code || e.message || "desconocido");
+      err.classList.remove("hidden");
+    }
+  }
+};
+
+// Añade un día no lectivo manual (formulario de alta del diálogo, v2.40)
+window._dnlManageAdd = async () => {
+  const draft = window._dnlManageDraft;
+  if (!draft) return;
+  const curso = (state.cursos || []).find(c => c.id === draft.cursoId) || getCurrentCurso();
+  const fechaEl = document.getElementById("dnl-m-fecha");
+  const motivoEl = document.getElementById("dnl-m-motivo");
+  const err = document.getElementById("dnl-m-error");
+  const ok = document.getElementById("dnl-m-ok");
+  const fecha = fechaEl ? String(fechaEl.value || "").trim() : "";
+  const detalle = motivoEl ? String(motivoEl.value || "").trim() : "";
+  const problema = validarFechaDiasNoLectivos(fecha, curso, null);
+  if (problema) {
+    if (ok) ok.classList.add("hidden");
+    if (err) { err.textContent = problema; err.classList.remove("hidden"); }
+    return;
+  }
+  const dias = getDiasNoLectivosCurso(curso);
+  const nuevos = dias.concat([{ fecha, categorias: [], detalle }]).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  await window._dnlManageApply(curso, nuevos, `Añadido el ${formatDateES(normalizeDate(fecha))}${detalle ? " · " + detalle : ""} · el curso queda con ${nuevos.length} día(s) no lectivo(s).`);
+  if (fechaEl) fechaEl.value = "";
+  if (motivoEl) motivoEl.value = "";
+};
+
+// Edición en línea de un día (v2.40): entrar en modo edición, guardar o cancelar
+window._dnlManageStartEdit = (fecha) => {
+  const draft = window._dnlManageDraft;
+  if (!draft || !fecha) return;
+  draft.editing = fecha;
+  const err = document.getElementById("dnl-m-error");
+  const ok = document.getElementById("dnl-m-ok");
+  if (err) err.classList.add("hidden");
+  if (ok) ok.classList.add("hidden");
+  window._dnlManageRenderBody();
+};
+
+window._dnlManageCancelEdit = () => {
+  const draft = window._dnlManageDraft;
+  if (!draft) return;
+  draft.editing = null;
+  window._dnlManageRenderBody();
+};
+
+window._dnlManageSaveEdit = async (originalFecha) => {
+  const draft = window._dnlManageDraft;
+  if (!draft) return;
+  const original = originalFecha || draft.editing;
+  if (!original) return;
+  const curso = (state.cursos || []).find(c => c.id === draft.cursoId) || getCurrentCurso();
+  const fechaEl = document.getElementById("dnl-m-edit-fecha");
+  const motivoEl = document.getElementById("dnl-m-edit-motivo");
+  const err = document.getElementById("dnl-m-error");
+  const ok = document.getElementById("dnl-m-ok");
+  const fecha = fechaEl ? String(fechaEl.value || "").trim() : "";
+  const detalle = motivoEl ? String(motivoEl.value || "").trim() : "";
+  const problema = validarFechaDiasNoLectivos(fecha, curso, original);
+  if (problema) {
+    if (ok) ok.classList.add("hidden");
+    if (err) { err.textContent = problema; err.classList.remove("hidden"); }
+    return;
+  }
+  const dias = getDiasNoLectivosCurso(curso);
+  if (!dias.some(x => x.fecha === original)) {
+    draft.editing = null;
+    window._dnlManageRenderBody();
+    return;
+  }
+  const nuevos = dias.map(d => d.fecha === original ? { fecha, categorias: d.categorias || [], detalle } : d)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const msg = fecha === original
+    ? `Actualizado el ${formatDateES(normalizeDate(fecha))}${detalle ? " · " + detalle : ""}.`
+    : `Modificado: ${formatDateES(normalizeDate(original))} → ${formatDateES(normalizeDate(fecha))}${detalle ? " · " + detalle : ""}.`;
+  await window._dnlManageApply(curso, nuevos, msg);
+};
+
+// Elimina un día no lectivo (con confirmación, v2.40)
+window._dnlManageDelete = async (fecha) => {
+  const draft = window._dnlManageDraft;
+  if (!draft || !fecha) return;
+  const curso = (state.cursos || []).find(c => c.id === draft.cursoId) || getCurrentCurso();
+  const info = getDiasNoLectivosCurso(curso).find(x => x.fecha === fecha);
+  if (!info) return;
+  const motivoTxt = motivoDiaNoLectivo(info);
+  if (!confirm(`¿Eliminar el día no lectivo del ${formatDateES(normalizeDate(fecha))}${motivoTxt && motivoTxt !== "día no lectivo" ? " (" + motivoTxt + ")" : ""}?\n\nEse día volverá a admitir el registro de evidencias en los cronogramas de lectura y de razonamiento matemático.`)) return;
+  const nuevos = getDiasNoLectivosCurso(curso).filter(x => x.fecha !== fecha);
+  await window._dnlManageApply(curso, nuevos, `Eliminado el ${formatDateES(normalizeDate(fecha))} · quedan ${nuevos.length} día(s) no lectivo(s).`);
 };
 
 // =============================================================================
