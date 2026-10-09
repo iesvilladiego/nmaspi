@@ -13,7 +13,7 @@
 // APP_VERSION de index.html / NMasPi.html. La activación borra las cachés
 // antiguas y skipWaiting()+clients.claim() ponen la versión nueva en marcha.
 
-const CACHE_NAME = 'nmaspi-v2.36';
+const CACHE_NAME = 'nmaspi-v2.37';
 const APP_PAGES = [
   './NMasPi.html',
   './index.html',
