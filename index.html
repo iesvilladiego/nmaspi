@@ -438,7 +438,7 @@ const INSTITUTO = {
 // (v2.38), en el pie del login y en el panel de gestión de usuarios para poder
 // comprobar de un vistazo si el dispositivo está ejecutando la versión nueva o
 // una copia antigua cacheada por la PWA.
-const APP_VERSION = "2.38";
+const APP_VERSION = "2.39";
 
 // Versión de la aplicación para el chip del banner de cabecera: se pregunta al
 // service worker activo (su CACHE_NAME, p. ej. "nmaspi-v2.34" → "2.34") con un
@@ -3224,11 +3224,17 @@ function renderAppShell() {
     || (state.user?.email && !isSyntheticEmail(state.user?.email) ? localPartOf(state.user.email) : "")
     || "";
 
+  // Menú superior (v2.39): en la pantalla de Inicio no se muestran «Plan Lector»
+  // ni «Razonamiento Matemático»: la propia pantalla ya ofrece ambas secciones
+  // como tarjetas grandes y el menú no duplica el acceso. En el resto de
+  // pantallas siguen visibles para poder cambiar de plan sin volver a Inicio.
+  // navItems alimenta tanto la barra de escritorio como el menú móvil (drawer).
+  const enHome = v.name === "home";
   const navItems = [
     { label: "Inicio", view: { name: "home" }, icon: '<path d="M3 12l9-9 9 9"/><path d="M5 10v10h14V10"/>' },
-    { label: "Plan Lector", view: { name: "plan-lector" }, icon: '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>' },
-    { label: "Razonamiento Matemático", view: { name: "razonamiento-matematico" }, icon: '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/>' },
-  ];
+    enHome ? null : { label: "Plan Lector", view: { name: "plan-lector" }, icon: '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>' },
+    enHome ? null : { label: "Razonamiento Matemático", view: { name: "razonamiento-matematico" }, icon: '<rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="12" y2="14"/>' },
+  ].filter(Boolean);
   // Elementos de navegación solo para admin
   const adminNavItems = [
     { label: "Informes", view: { name: "informes" }, icon: '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>' },
